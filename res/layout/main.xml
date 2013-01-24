@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="fill_parent"
+    android:layout_height="fill_parent"
+    >
+<TextView  
+    android:id="@+id/time_tv"
+    android:layout_width="fill_parent" 
+    android:layout_height="wrap_content" 
+    android:text="00:00:00.0"
+    android:paddingLeft="5px"
+    android:paddingRight="5px"
+    android:textSize="60px"
+    />
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    >
+    
+  <TextView  
+      android:id="@+id/dist_tv"
+      android:layout_width="fill_parent" 
+      android:layout_height="wrap_content" 
+      android:text="0.000"
+      android:paddingLeft="5px"
+      android:paddingRight="0px"
+      android:textSize="30px"
+      />
+  <TextView  
+      android:id="@+id/unit_tv"
+      android:layout_width="fill_parent" 
+      android:layout_height="wrap_content" 
+      android:text="Mi"
+      android:paddingLeft="2px"
+      android:paddingRight="10px"
+      android:textSize="12px"
+      />
+  <TextView  
+      android:id="@+id/pace_tv"
+      android:layout_width="fill_parent" 
+      android:layout_height="wrap_content" 
+      android:text="00:00"
+      android:paddingLeft="2px"
+      android:paddingRight="2px"
+      android:textSize="30px"
+      />
+  <TextView  
+      android:id="@+id/pace_label_tv"
+      android:layout_width="fill_parent" 
+      android:layout_height="wrap_content" 
+      android:text="min/mi now"
+      android:paddingLeft="2px"
+      android:paddingRight="2px"
+      android:textSize="12px"
+      />
+  </LinearLayout>  
+  <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    >
+    
+  <TextView  
+      android:id="@+id/time_of_day_tv"
+      android:layout_width="fill_parent" 
+      android:layout_height="wrap_content" 
+      android:text=""
+      android:paddingLeft="5px"
+      android:paddingRight="0px"
+      android:textSize="20px"
+      />
+  </LinearLayout>  
+
+  <TextView  
+      android:id="@+id/status_tv"
+      android:layout_width="fill_parent" 
+      android:layout_height="wrap_content" 
+      android:text="Fast Running Friend started"
+      android:paddingLeft="2px"
+      android:paddingRight="2px"
+      android:textSize="12px"
+      />
+  
+</LinearLayout>
+
