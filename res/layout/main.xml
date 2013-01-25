@@ -69,9 +69,18 @@
       android:text=""
       android:paddingLeft="5px"
       android:paddingRight="0px"
-      android:textSize="20px"
+      android:textSize="25px"
       />
   </LinearLayout>  
+  <TextView  
+      android:id="@+id/battery_tv"
+      android:layout_width="fill_parent" 
+      android:layout_height="wrap_content" 
+      android:text=""
+      android:paddingLeft="2px"
+      android:paddingRight="2px"
+      android:textSize="15px"
+      />
 
   <TextView  
       android:id="@+id/status_tv"
@@ -80,7 +89,7 @@
       android:text="Fast Running Friend started"
       android:paddingLeft="2px"
       android:paddingRight="2px"
-      android:textSize="12px"
+      android:textSize="15px"
       />
   
 </LinearLayout>

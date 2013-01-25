@@ -4,6 +4,10 @@ import android.app.Activity;
 import android.os.Bundle;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
+
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -166,7 +170,7 @@ class GPSCoordBuffer
 public class FastRunningFriend extends Activity implements LocationListener
 {
     LocationManager lm;
-    TextView time_tv,dist_tv,pace_tv,status_tv,time_of_day_tv;
+    TextView time_tv,dist_tv,pace_tv,status_tv,time_of_day_tv,battery_tv;
     public static final String PREFS_NAME = "FastRunningFriendPrefs";
 
     Handler timer_h = new Handler();
@@ -183,6 +187,24 @@ public class FastRunningFriend extends Activity implements LocationListener
     boolean gps_running = false;
     Calendar cal = Calendar.getInstance();
     
+    BroadcastReceiver battery_receiver = new BroadcastReceiver() {
+        int scale = -1;
+        int level = -1;
+        int voltage = -1;
+        int temp = -1;
+        
+        @Override
+        public void onReceive(Context context, Intent intent) 
+        {
+            if (battery_tv != null)
+            {  
+              level = intent.getIntExtra("level", -1);
+              scale = intent.getIntExtra("scale", -1);
+              battery_tv.setText(String.format("Battery %d%%", level*100/scale));
+            }  
+        }
+    };
+    
     Runnable update_tod_task = new Runnable()
     {
       public void run()
@@ -190,12 +212,17 @@ public class FastRunningFriend extends Activity implements LocationListener
         if (time_of_day_tv != null)
         {
           cal.setTimeInMillis(System.currentTimeMillis());
+          int h = cal.get(Calendar.HOUR_OF_DAY);
+          final boolean is_am = (h < 12);
+          
+          if (!is_am)
+            h -= 12;
+          
           time_of_day_tv.setText(String.format("%02d:%02d:%02d%s %02d/%02d/%04d",
-                                                cal.get(Calendar.HOUR),
+                                                h,
                                                 cal.get(Calendar.MINUTE),
                                                 cal.get(Calendar.SECOND),
-                                                cal.get(Calendar.AM_PM) == Calendar.AM ?
-                                                  "am":"pm",
+                                                is_am ? "am":"pm",
                                                 cal.get(Calendar.MONTH) + 1,
                                                 cal.get(Calendar.DAY_OF_MONTH),
                                                 cal.get(Calendar.YEAR)
@@ -244,6 +271,7 @@ public class FastRunningFriend extends Activity implements LocationListener
         pace_tv = (TextView) findViewById(R.id.pace_tv);
         status_tv = (TextView) findViewById(R.id.status_tv);
         time_of_day_tv = (TextView) findViewById(R.id.time_of_day_tv);
+        battery_tv = (TextView) findViewById(R.id.battery_tv);
         lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         
         getWindow().addFlags(
@@ -253,6 +281,8 @@ public class FastRunningFriend extends Activity implements LocationListener
           resume_timer_display();
         
         start_tod_timer();
+        IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        registerReceiver(battery_receiver, filter);
     }
     
     public void start_tod_timer()
@@ -394,8 +424,8 @@ public class FastRunningFriend extends Activity implements LocationListener
           break;
         
         case BACK:
-          return timer_state == TimerState.RUNNING ? 
-            TimerAction.IGNORE : TimerAction.PASS;
+          return timer_state == TimerState.INITIAL ? 
+            TimerAction.PASS : TimerAction.IGNORE;
         case IGNORE:
         default:
           break;
@@ -412,7 +442,6 @@ public class FastRunningFriend extends Activity implements LocationListener
     protected void suspend_timer_display()
     {
       timer_h.removeCallbacks(update_time_task);
-      stop_gps();
     }
 
     protected void start_gps()
@@ -439,6 +468,13 @@ public class FastRunningFriend extends Activity implements LocationListener
       post_time(cfg.pause_time-cfg.start_time,time_tv);
       post_pace(0);
     }   
+    
+    public void onDestroy()
+    {
+      stop_gps();
+      unregisterReceiver(battery_receiver);
+      super.onDestroy();
+    }
       
     protected void reset_timer()
     {
@@ -452,6 +488,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       post_pace(0);
       post_dist();
       suspend_timer_display();
+      stop_gps();
     }     
 
 
