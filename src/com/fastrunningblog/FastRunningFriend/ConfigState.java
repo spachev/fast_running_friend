@@ -11,6 +11,15 @@ class ConfigState
     long max_dist_delay = 3000; 
     boolean gps_guess_mode = true;
     int min_running_pace = 16*60;
+    public double min_cos = Math.cos(10.0 * Math.PI/180.0);
+    public double min_neighbor_cos = Math.cos(5.0 * Math.PI/180.0);
+    public double min_d_last_trusted = 0.08, max_d_last_trusted = 0.15,
+      max_pace_diff = 0.07, top_pace_t = 300000.0 /* 5:00 */, start_pace_t = 480000.0 /* 8:00 */;
+    public long max_t_no_signal = 120000;  
+    public long dist_update_interval = 500;
+    public int expire_files_days = 7;
+    
+    String data_dir = "/mnt/sdcard/FastRunningFriend";
     
     public void saveToBundle(Bundle b)
     {

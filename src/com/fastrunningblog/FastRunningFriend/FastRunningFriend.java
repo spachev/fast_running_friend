@@ -16,13 +16,20 @@ import android.view.KeyEvent;
 import android.view.WindowManager;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.util.Log;
+
 import java.util.Calendar;
 
 
 class GPSCoord
 {
-  public double lon,lat;
+  public double lon,lat,dist_to_prev;
+  public float speed,bearing,accuracy;
   public long ts;
+  public double angle_cos;
+  public int angle_sign;
+  public boolean angle_valid;
+  public boolean good;
   static float[] results = new float[1];
   
   public GPSCoord()
@@ -30,23 +37,95 @@ class GPSCoord
     reset();
   }
   
-  public void init(Location loc)
+  public void init(Location loc, ConfigState cfg)
   {
     lon = loc.getLongitude();
     lat = loc.getLatitude();
-    ts = FastRunningFriend.time_now();
+    speed = loc.getSpeed();
+    bearing = loc.getBearing();
+    accuracy = loc.getAccuracy();
+    dist_to_prev = 0.0;
+    ts = FastRunningFriend.running_time(cfg);
+    angle_valid = false;
+    good = false;
   }
   
   public double get_dist(GPSCoord other)
   {
     Location.distanceBetween(lat,lon,other.lat,other.lon,results);
-    return (double)results[0];
+    return (double)results[0]/1609.34;
+  }
+
+  public void mark_point(GPSCoord prev, GPSCoord next, ConfigState cfg)
+  {
+    if (!angle_valid)
+    {  
+      good = false;
+      return;
+    }
+    
+    if (angle_cos > cfg.min_cos)
+    {
+      good = true;
+      return;
+    }
+    
+    boolean good_signs = (angle_sign == prev.angle_sign && angle_sign == next.angle_sign);
+    
+    if (!good_signs)
+    {
+      good = false;
+      return;
+    }
+    
+    if (prev.angle_cos > cfg.min_neighbor_cos && next.angle_cos > cfg.min_neighbor_cos)
+    {
+      good = true;
+      return;
+    }
+    
+    good = false;
+  }
+
+  public void set_angle(GPSCoord prev, GPSCoord next, double lat_cos)
+  {
+    double dx_prev,dy_prev,dx_next,dy_next,dot_p,sq_prod;
+    dx_next = (next.lat - lat) * 1000.0;
+    dx_prev = (lat - prev.lat) * 1000.0;
+    dy_next = (next.lon - lon) * 1000.0 * lat_cos;
+    dy_prev = (lon - prev.lon) * 1000.0 * lat_cos;
+    dot_p = dx_next*dx_prev + dy_next * dy_prev;
+    sq_prod = (dx_next*dx_next+dy_next*dy_next)*(dx_prev*dx_prev + dy_prev*dy_prev);
+    
+    if (sq_prod == 0.0)
+    {
+      return;
+    }
+    
+    angle_valid = true;
+    angle_cos = dot_p/Math.sqrt(sq_prod);
+    double cross_p = dy_next * dx_prev - dy_prev * dx_next;
+    
+    if (cross_p > 0)
+      angle_sign = -1;
+    else if (cross_p < 0)
+      angle_sign = 1;
+    else 
+      angle_sign = 0;
+  }
+
+  public void set_dist_to_prev(GPSCoord prev)
+  {
+    Location.distanceBetween(lat,lon,prev.lat,prev.lon,results);
+    dist_to_prev = (double)results[0];
   }
 
   public void reset()
   {
     lon = lat = 0.0;
     ts = 0;
+    angle_valid = false;
+    good = false;
   }
     
   public void add(GPSCoord other)
@@ -64,34 +143,218 @@ class GPSCoord
   }
 };
 
+class DistInfo
+{
+  public double dist,pace_t;
+  public long ts;
+  public enum ConfidenceLevel { NORMAL,INITIAL,BAD_SIGNAL,SUSPECT_SIGNAL,SIGNAL_LOST,
+          SIGNAL_SEARCH,
+          SIGNAL_RECOVERY, 
+          SIGNAL_RESTORED,
+          SIGNAL_DISABLED
+  };
+  public ConfidenceLevel conf_level;
+  public String debug_msg = "";
+  
+  public String get_status_str()
+  {
+    switch (conf_level)
+    {
+      case NORMAL:
+        return "Good signal";
+      case INITIAL:
+        return "Initial guess";
+      case BAD_SIGNAL:
+        return "Bad signal";
+      case SUSPECT_SIGNAL:
+        return "Suspect signal";
+      case SIGNAL_LOST:
+        return "Signal lost";
+      case SIGNAL_DISABLED:
+        return "Signal disabled";
+      case SIGNAL_SEARCH:
+        return "Searching for signal";
+      case SIGNAL_RECOVERY:
+        return "Lost signal recovery";
+      case SIGNAL_RESTORED:
+        return "Signal restored";
+      default:
+        return "Unknown";
+    }
+  }
+};
+
 class GPSCoordBuffer
 {
     public static final int COORD_BUF_SIZE = 1024;
     public static final int SAMPLE_SIZE = 8;
     protected GPSCoord[] buf = new GPSCoord[COORD_BUF_SIZE];
-    protected int buf_start = 0, buf_end = 0;
+    protected int buf_start = 0, buf_end = 0, flush_ind = 0;
     long last_dist_time = 0;
     protected GPSCoord from_coord = new GPSCoord();
     protected GPSCoord to_coord = new GPSCoord();
-    protected long points = 0;
+    protected long points = 0, points_since_signal = 0;
+    protected double total_dist = 0.0;
+    protected int last_trusted_ind = 0;
+    protected long last_trusted_ts = 0;
+    protected double last_trusted_d = 0.0;
+    protected double lat_cos = 0.0;
+    protected boolean lat_cos_inited = false;
+    protected int last_processed_ind = 0, last_good_ind = 0;
+    protected double last_pace_t = 0.0;
+    public DistInfo.ConfidenceLevel conf_level = DistInfo.ConfidenceLevel.INITIAL;
     
-    public GPSCoordBuffer()
+    protected ConfigState cfg = null;
+    public static final String TAG = "FastRunningFriend";
+    
+    public native boolean init_data_dir(String dir_name);
+    public native boolean open_data_file();
+    public native boolean close_data_file();
+    public native boolean flush();
+    public native void debug_log(String msg);
+    
+    public GPSCoordBuffer(ConfigState cfg)
     {
+      this.cfg = cfg;
+      
       for (int i = 0; i < COORD_BUF_SIZE; i++)
         buf[i] = new GPSCoord();
     }
     
     public void reset()
     {
-      buf_start = buf_end = 0;
-      points = 0;
+      flush();
+      last_processed_ind = flush_ind = buf_start = buf_end = 0;
+      last_trusted_d = 0.0;
+      last_trusted_ind = 0;
+      last_trusted_ts = 0;
+      last_pace_t = 0.0;
+      last_good_ind = 0;
+      total_dist = 0.0;
+      points_since_signal = points = 0;
+    }
+    
+    public GPSCoord get_prev()
+    {
+      if (points < 2)
+        return null;
+      
+      int ind = buf_end - 1;
+      
+      if (ind < 0)
+        ind += COORD_BUF_SIZE;
+      
+      return buf[ind];
+    }
+    
+    public void update_dist()
+    {
+      int i,update_end = buf_end - 2, start_ind = last_good_ind + 1;
+      
+      debug_log(String.format("total_dist=%f last_trusted_d=%f, start_ind=%d,update_end=%d",
+                              total_dist, last_trusted_d, start_ind, update_end));
+      
+      if (update_end < 0)
+        update_end += COORD_BUF_SIZE;
+      
+      if (start_ind == COORD_BUF_SIZE)
+        start_ind = 0;
+      
+      for (i = start_ind; i != update_end; )
+      {
+        debug_log(String.format("Point %d at %d is %s", points, i, buf[i].good ? "good" : "bad"));
+        
+        if (buf[i].good)
+        {
+          last_trusted_d += buf[i].get_dist(buf[last_good_ind]);
+          last_good_ind = i;
+          debug_log(String.format("i=%d last_trusted_d=%f",i,last_trusted_d));
+          
+          if (last_trusted_d < cfg.min_d_last_trusted)
+            return;
+          
+          long dt = buf[i].ts - buf[last_trusted_ind].ts;
+          
+          if (dt == 0)
+            return;
+          
+          double pace_t = (double)dt/last_trusted_d;
+          boolean good_pace = (
+                       (last_pace_t == 0.0 && pace_t > cfg.top_pace_t) ||
+                       Math.abs(last_pace_t/pace_t - 1.0) < cfg.max_pace_diff
+                      );
+          if (good_pace || last_trusted_d > cfg.max_d_last_trusted)
+          {
+            if (good_pace)
+            {
+              total_dist += last_trusted_d;
+              last_trusted_d = 0.0;
+              last_trusted_ts = buf[i].ts;
+              last_pace_t = pace_t;
+              last_trusted_ind = i;
+              conf_level = DistInfo.ConfidenceLevel.NORMAL;
+              debug_log("Trusted point at index " + i + ", good pace " + pace_t);
+              return;
+            }
+            
+            double dx_direct = buf[i].get_dist(buf[last_trusted_ind]);
+            double direct_pace_t = 0.0;
+            
+            if (dx_direct > 0.0)
+              direct_pace_t = dt/dx_direct;
+            
+            boolean use_direct = false;
+            
+            if (last_pace_t == 0.0)
+            {
+              if (pace_t < cfg.top_pace_t)
+                use_direct = true;
+            }
+            else
+            {
+              if (Math.abs(last_pace_t - direct_pace_t) < 
+                  Math.abs(last_pace_t - pace_t) && cfg.top_pace_t > pace_t)
+                use_direct = true;
+            }
+            
+            if (use_direct)
+            {  
+              total_dist += dx_direct;
+              last_pace_t = direct_pace_t;
+              conf_level = DistInfo.ConfidenceLevel.BAD_SIGNAL;
+              debug_log("BAD_SIGNAL: Trusted point at index " + i 
+                + ", direct pace " + direct_pace_t + ", dx_direct=" + dx_direct );
+            }  
+            else
+            {  
+              total_dist += last_trusted_d;
+              last_pace_t = pace_t;
+              conf_level = DistInfo.ConfidenceLevel.SUSPECT_SIGNAL;
+              debug_log("SUSPECT_SIGNAL: Trusted point at index " + i 
+                + ", integrated pace " + pace_t );
+            }  
+            
+            last_trusted_ind = i;
+            last_trusted_d = 0.0;
+            
+            last_trusted_ts = buf[i].ts;
+            return;
+          }
+          
+          break;
+        }
+        
+        if (++i == COORD_BUF_SIZE)
+          i = 0;
+      }
     }
     
     public void push(Location coord)
     {
       if (buf_end < COORD_BUF_SIZE)
       {
-        buf[buf_end++].init(coord);
+        int save_buf_end = buf_end;
+        buf[buf_end++].init(coord,cfg);
         
         if (buf_end == COORD_BUF_SIZE)
         {
@@ -103,10 +366,67 @@ class GPSCoordBuffer
          
         if (buf_start == COORD_BUF_SIZE)
             buf_start = 0;
+
+        if (!lat_cos_inited)
+        {  
+          lat_cos = Math.cos(buf[save_buf_end].lat*Math.PI/180.0);
+          lat_cos_inited = true;
+        }
+          
+        if (points > 0)
+        {  
+          int prev_ind = save_buf_end - 1;
+          
+          if (prev_ind < 0)
+            prev_ind += COORD_BUF_SIZE;
+          
+          //buf[save_buf_end].set_dist_to_prev(buf[prev_ind]);
+          if (points > 1)
+          {
+            int p_prev_ind = prev_ind - 1;
+            
+            if (p_prev_ind < 0)
+              p_prev_ind += COORD_BUF_SIZE;
+            
+            buf[prev_ind].set_angle(buf[p_prev_ind],buf[save_buf_end],lat_cos);
+            
+            if (points > 2)
+            {
+              int pp_prev_ind = p_prev_ind - 1;
+              
+              if (pp_prev_ind < 0)
+                pp_prev_ind += COORD_BUF_SIZE;
+              
+              buf[p_prev_ind].mark_point(buf[pp_prev_ind],buf[prev_ind], cfg);
+            }
+          }
+        }
+          
+        points++;
+        points_since_signal++;
+        flush();
         
-        points++;    
+        switch(conf_level)
+        {
+          case SIGNAL_LOST:
+            if (points_since_signal > 1)
+            {  
+              handle_no_signal();
+              conf_level = DistInfo.ConfidenceLevel.SIGNAL_RESTORED;
+            }
+            break;
+          case SIGNAL_SEARCH:
+            conf_level = DistInfo.ConfidenceLevel.INITIAL;
+            break;
+          default:
+            break;
+        }
+        
+        if (points_since_signal >= 3)
+          update_dist();
       }  
     }
+ 
   
     public long get_last_ts()
     {
@@ -121,7 +441,49 @@ class GPSCoordBuffer
       return buf[last_ind].ts;    
     } 
     
-    public double get_dist()
+    public void handle_no_signal()
+    {
+      int cur_ind = buf_end - 1;
+      
+      if (cur_ind < 0)
+        cur_ind += COORD_BUF_SIZE;
+      
+      last_trusted_ind = cur_ind;
+      last_trusted_d = 0.0;
+      last_good_ind = cur_ind;
+      points_since_signal = 1;
+      long dt = buf[cur_ind].ts - last_trusted_ts;
+      double pace_t = (last_pace_t > 0.0) ? last_pace_t : cfg.start_pace_t;
+      double dx = (double)dt/pace_t;
+      
+      if (dx > 0.0)
+        total_dist += dx;
+      
+      last_trusted_ts = buf[cur_ind].ts;
+    }
+    
+    public void get_dist_info(DistInfo di, long now_ts) // need now_ts to avoid checking time twice
+    {
+      di.dist = total_dist;
+      di.pace_t = (last_pace_t > 0.0) ? last_pace_t : cfg.start_pace_t;
+      di.ts = last_trusted_ts;
+      di.conf_level = conf_level;      
+      long dt = now_ts - di.ts; // if last_trusted_ts is 0 it still works
+      
+      if (dt > cfg.max_t_no_signal && points_since_signal > 0)
+      {
+        di.conf_level = conf_level = DistInfo.ConfidenceLevel.SIGNAL_LOST;
+        debug_log("Signal lost");
+      }
+      
+      if (dt > 0 && di.pace_t > 0.0)
+      {  
+        di.dist += (double)dt/di.pace_t;
+      }  
+    }
+    
+    /*
+    public double get_dist_old()
     {
       if (points < SAMPLE_SIZE)
         return 0.0;
@@ -165,6 +527,7 @@ class GPSCoordBuffer
     }
     
     long get_last_dist_time() { return last_dist_time; }
+    */
 };
 
 public class FastRunningFriend extends Activity implements LocationListener
@@ -176,8 +539,9 @@ public class FastRunningFriend extends Activity implements LocationListener
     Handler timer_h = new Handler();
     Handler tod_timer_h = new Handler();
     ConfigState cfg = new ConfigState();
-    GPSCoordBuffer coord_buf = new GPSCoordBuffer();
-    double total_dist = 0.0;
+    GPSCoordBuffer coord_buf = new GPSCoordBuffer(cfg);
+    protected long dist_uppdate_ts = 0;
+    protected DistInfo dist_info = new DistInfo();
     protected enum TimerState {RUNNING,PAUSED,INITIAL;}
     protected enum TimerAction {START,SPLIT,PAUSE,RESET,RESUME,START_GPS,STOP_GPS,
       IGNORE,PASS;}
@@ -186,6 +550,8 @@ public class FastRunningFriend extends Activity implements LocationListener
     TimerState timer_state = TimerState.INITIAL; 
     boolean gps_running = false;
     Calendar cal = Calendar.getInstance();
+    protected long dist_update_ts = 0;
+    public native void set_system_time(long t_ms);
     
     BroadcastReceiver battery_receiver = new BroadcastReceiver() {
         int scale = -1;
@@ -215,7 +581,7 @@ public class FastRunningFriend extends Activity implements LocationListener
           int h = cal.get(Calendar.HOUR_OF_DAY);
           final boolean is_am = (h < 12);
           
-          if (!is_am)
+          if (h > 12)
             h -= 12;
           
           time_of_day_tv.setText(String.format("%02d:%02d:%02d%s %02d/%02d/%04d",
@@ -237,22 +603,23 @@ public class FastRunningFriend extends Activity implements LocationListener
        public void run()
        {
          final long now = time_now();
-         post_time(now - cfg.start_time,time_tv);
+         final long run_ts = now - cfg.start_time;
+         post_time(run_ts,time_tv);
          timer_h.postAtTime(this,SystemClock.uptimeMillis()+100);
          
-         if (!cfg.gps_guess_mode)
+         if (dist_update_ts == 0 || now - dist_update_ts > cfg.dist_update_interval)
          {
-           final long last_ts = coord_buf.get_last_ts();
-           
-           if (last_ts != 0 || now - last_ts > cfg.max_dist_delay)
-           {
-             cfg.gps_guess_mode = true;
-             update_status(String.format("No signal for %.3f s", 
-                                           (float)(now - last_ts)/1000.0));
-           }
+           coord_buf.get_dist_info(dist_info,run_ts);
+           show_dist_info(dist_info);
+           dist_update_ts = now;
          }
        }
      };
+     
+     static
+     {
+       System.loadLibrary("fast_running_friend");  
+     }
 
     /** Called when the activity is first created. */
     @Override
@@ -280,9 +647,34 @@ public class FastRunningFriend extends Activity implements LocationListener
         if (cfg.start_time != 0)
           resume_timer_display();
         
+        update_tod_task.run(); // do one run so we do not wait a second before the time_now
+                               // appears
         start_tod_timer();
         IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
         registerReceiver(battery_receiver, filter);
+        
+        if (!coord_buf.init_data_dir(cfg.data_dir))
+        {
+          update_status("Directory " + cfg.data_dir + 
+           " does not exist and could not be created, will not save data");
+        }
+    }
+    
+    public void test_gps_bug()
+    {
+      /*
+      40.314353,-111.655104,937778340,3.000639,16.000000,9.487171,3.280000
+      40.314385,-111.655104,937779341,2950.528076,19.000000,9.487171,3.230000
+      */
+      GPSCoord p1 = new GPSCoord();
+      GPSCoord p2 = new GPSCoord();
+      p1.lat = 40.314353;
+      p1.lon = -111.655104;
+      p2.lat = 40.314385;
+      p2.lon = -111.655104;
+      double d1 = p1.get_dist(p2);
+      double d2 = p2.get_dist(p1);
+      update_status(String.format("Bug test: d1=%f,d2=%f",d1,d2));
     }
     
     public void start_tod_timer()
@@ -293,28 +685,20 @@ public class FastRunningFriend extends Activity implements LocationListener
     
     public void onLocationChanged(Location arg0) 
     {
-      update_status(String.format("Have signal at %.3f,%.3f",
-                                     arg0.getLatitude(),
-                                     arg0.getLongitude()));
       if (timer_state != TimerState.RUNNING)
       {  
-        return;
+         if (arg0 != null)
+         {  
+           update_status(String.format("Have signal at %.3f,%.3f",
+                                       arg0.getLatitude(),
+                                       arg0.getLongitude()));
+                                       
+           set_system_time(arg0.getTime());                            
+         }
+         return;
       }
       
       coord_buf.push(arg0);
-      double dist = coord_buf.get_dist(); 
-      long t = coord_buf.get_last_dist_time();
-      // milliseconds per meters is the same as seconds per kilometer
-      int pace = (dist > 0.0) ? (int)((t/dist)*1.60934) : 0;
-      
-      if (pace > 0 && pace < cfg.min_running_pace)
-      {  
-        total_dist += dist;
-        post_pace(pace);
-        post_dist();
-      }
-      else
-        update_status("Standing or walking");
     }
     
     public void onProviderDisabled(String arg0) 
@@ -446,10 +830,17 @@ public class FastRunningFriend extends Activity implements LocationListener
 
     protected void start_gps()
     {
+        Location loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
         lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 
             500, 1, this);
-        update_status("Searching for GPS signal");    
+        String status_msg = "Searching for GPS signal";
+        
+        if (loc != null)
+          status_msg += String.format(", last %.3f,%.3f",loc.getLatitude(),
+                                      loc.getLongitude());
+        update_status(status_msg);    
         gps_running = true;    
+        coord_buf.conf_level = DistInfo.ConfidenceLevel.SIGNAL_SEARCH;
    }
     
     protected void stop_gps()
@@ -457,6 +848,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       lm.removeUpdates(this);
       update_status("Stopped GPS updates");    
       gps_running = false;
+      coord_buf.conf_level = DistInfo.ConfidenceLevel.SIGNAL_DISABLED;
     }
 
     protected void pause_timer()
@@ -467,6 +859,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       suspend_timer_display();
       post_time(cfg.pause_time-cfg.start_time,time_tv);
       post_pace(0);
+      coord_buf.debug_log("Timer paused");
     }   
     
     public void onDestroy()
@@ -481,14 +874,16 @@ public class FastRunningFriend extends Activity implements LocationListener
       cfg.save_time();
       cfg.pause_time = cfg.start_time ;
       cfg.resume_time = 0;
-      total_dist = 0.0;
       coord_buf.reset();
       timer_state = TimerState.INITIAL;
       post_time(0,time_tv);
       post_pace(0);
-      post_dist();
+      post_dist(0.0);
       suspend_timer_display();
       stop_gps();
+      dist_update_ts = 0;
+      coord_buf.debug_log("Timer reset");
+      coord_buf.close_data_file();
     }     
 
 
@@ -514,8 +909,12 @@ public class FastRunningFriend extends Activity implements LocationListener
        cfg.save_time();
        cfg.resume_time = cfg.start_time = get_start_time();
        cfg.pause_time = 0;
-       total_dist = 0.0;
        timer_state = TimerState.RUNNING;
+       
+       if (!coord_buf.open_data_file())
+         update_status("Error opening GPS data file, cannot save data");
+       
+       coord_buf.debug_log("Timer started");
        resume_timer_display();
    }   
     
@@ -525,10 +924,17 @@ public class FastRunningFriend extends Activity implements LocationListener
       int sec = pace % 60;
       pace_tv.setText(String.format("%02d:%02d", min, sec));
     }
-        
-    void post_dist()
+    
+    public void show_dist_info(DistInfo di)
     {
-      dist_tv.setText(String.format("%.3f", total_dist/1609.34));
+      post_dist(di.dist);
+      post_pace((int)di.pace_t/1000);
+      update_status("GPS: " + di.get_status_str());
+    }
+        
+    void post_dist(double total_dist)
+    {
+      dist_tv.setText(String.format("%.3f", total_dist));
     }
     
     void post_time(long ts, TextView tv)
@@ -542,6 +948,11 @@ public class FastRunningFriend extends Activity implements LocationListener
          tv.setText(String.format("%02d:%02d:%02d.%d",
            hh, mm, ss, fract));
            
+    }
+    
+    public static long running_time(ConfigState cfg)
+    {
+      return time_now() - cfg.start_time;
     }
     
     public static long time_now()
@@ -561,12 +972,16 @@ public class FastRunningFriend extends Activity implements LocationListener
       cfg.pause_time = 0;
       timer_state = TimerState.RUNNING;
       resume_timer_display();
+      coord_buf.debug_log("Timer resumed");
     }     
    
     protected void resume_timer_display()
     {
        timer_h.removeCallbacks(update_time_task);
-       start_gps();
+       
+       if (!gps_running)
+         start_gps();
+       
        timer_h.postDelayed(update_time_task,100);
     }
     

@@ -89,7 +89,7 @@
       android:text="Fast Running Friend started"
       android:paddingLeft="2px"
       android:paddingRight="2px"
-      android:textSize="15px"
+      android:textSize="18px"
       />
   
 </LinearLayout>
