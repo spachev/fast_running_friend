@@ -12,13 +12,25 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.widget.TextView;
+
+import android.view.ContextMenu; 
+import android.view.MenuInflater; 
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;  
+import android.view.ContextMenu.ContextMenuInfo;  
+
 import android.view.KeyEvent;
 import android.view.WindowManager;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiManager;
+import android.net.wifi.ScanResult;
 import android.util.Log;
 
 import java.util.Calendar;
+import java.util.List;
 
 
 class GPSCoord
@@ -202,6 +214,7 @@ class GPSCoordBuffer
     protected boolean lat_cos_inited = false;
     protected int last_processed_ind = 0, last_good_ind = 0;
     protected double last_pace_t = 0.0;
+    protected double pause_pace_t = 0.0;
     public DistInfo.ConfidenceLevel conf_level = DistInfo.ConfidenceLevel.INITIAL;
     
     protected ConfigState cfg = null;
@@ -221,7 +234,7 @@ class GPSCoordBuffer
         buf[i] = new GPSCoord();
     }
     
-    public void reset()
+    public void reset(boolean reset_dist)
     {
       flush();
       last_processed_ind = flush_ind = buf_start = buf_end = 0;
@@ -230,7 +243,10 @@ class GPSCoordBuffer
       last_trusted_ts = 0;
       last_pace_t = 0.0;
       last_good_ind = 0;
-      total_dist = 0.0;
+      
+      if (reset_dist)
+       total_dist = 0.0;
+      
       points_since_signal = points = 0;
     }
     
@@ -247,15 +263,21 @@ class GPSCoordBuffer
       return buf[ind];
     }
     
-    public void update_dist()
+    public void update_dist(boolean final_update)
     {
       int i,update_end = buf_end - 2, start_ind = last_good_ind + 1;
       
       debug_log(String.format("total_dist=%f last_trusted_d=%f, start_ind=%d,update_end=%d",
                               total_dist, last_trusted_d, start_ind, update_end));
       
+      if (final_update)
+        update_end++;
+      
       if (update_end < 0)
         update_end += COORD_BUF_SIZE;
+      
+      if (final_update)
+        buf[update_end].good = true;
       
       if (start_ind == COORD_BUF_SIZE)
         start_ind = 0;
@@ -283,7 +305,8 @@ class GPSCoordBuffer
                        (last_pace_t == 0.0 && pace_t > cfg.top_pace_t) ||
                        Math.abs(last_pace_t/pace_t - 1.0) < cfg.max_pace_diff
                       );
-          if (good_pace || last_trusted_d > cfg.max_d_last_trusted)
+          if (good_pace || last_trusted_d > cfg.max_d_last_trusted || 
+              (final_update && i == update_end))
           {
             if (good_pace)
             {
@@ -423,7 +446,7 @@ class GPSCoordBuffer
         }
         
         if (points_since_signal >= 3)
-          update_dist();
+          update_dist(false);
       }  
     }
  
@@ -440,6 +463,98 @@ class GPSCoordBuffer
         
       return buf[last_ind].ts;    
     } 
+   
+    public void handle_pause(DistInfo di)
+    {
+      long run_time = (cfg.pause_time - cfg.start_time);
+      double save_pace_t = last_pace_t;
+      
+      if (points_since_signal >= 3)
+        update_dist(true);
+      
+      get_dist_info(di,run_time);
+      total_dist = di.dist;
+      reset(false);
+      last_trusted_ts = run_time;
+      last_pace_t = save_pace_t;
+    }
+   
+    /* 
+    public void handle_pause_old_buggy(DistInfo di)
+    {
+      double dx;
+      long pause_dt = (cfg.pause_time - cfg.start_time) - last_trusted_ts;
+      double pace_t;
+      
+      if (points_since_signal == 0)
+      {
+        pace_t = (last_pace_t > 0.0) ? last_pace_t : cfg.start_pace_t;
+        dx = (double)pause_dt/pace_t;
+        total_dist += dx;
+        di.dist = total_dist;
+        di.pace_t = pace_t;
+        last_trusted_ts = (cfg.pause_time - cfg.start_time);
+        return;
+      }
+      
+      int cur_ind = buf_end - 1;
+      
+      if (cur_ind < 0)
+        cur_ind += COORD_BUF_SIZE;
+      
+      long dt = buf[cur_ind].ts - last_trusted_ts;
+      pace_t = (last_trusted_d > 0.0) ? dt/last_trusted_d : last_pace_t ;
+      
+      if (pace_t == 0.0)
+        pace_t = cfg.start_pace_t;
+      
+      boolean good_pace =
+         (pace_t > cfg.top_pace_t || (Math.abs(last_pace_t/pace_t-1.0) < 2.0 * cfg.max_pace_diff));
+      
+      if (pause_dt < 0)
+        pause_dt = 0;
+      
+      if (good_pace)
+      {
+        dx = last_trusted_d + (double)pause_dt/pace_t;
+      }  
+      else
+      {
+        double direct_dx = buf[cur_ind].get_dist(buf[last_trusted_ind]);
+        double direct_pace_t = (direct_dx > 0) ? dt/direct_dx : 0.0;
+        boolean use_direct = false;
+        
+        if (last_pace_t == 0.0)
+          use_direct = true;
+        else if (direct_pace_t > 0.0 && 
+              Math.abs(direct_pace_t - last_pace_t) < Math.abs(pace_t - last_pace_t))
+        {
+          use_direct = true;
+        }
+        
+        if (use_direct)
+        {
+          dx = direct_dx + (double)pause_dt/last_pace_t;
+          pace_t = direct_pace_t;
+        }
+        else
+          dx = last_trusted_d + (double)pause_dt/pace_t;
+      }
+      
+      if (dx > 0.0)
+        total_dist += dx;
+     
+      pause_pace_t = (pace_t == 0.0) ? cfg.start_pace_t : pace_t;
+      di.dist = total_dist ;
+      di.pace_t = pause_pace_t;
+      
+      last_trusted_ind = 0;
+      last_good_ind = 0;
+      points_since_signal = 0;
+      last_trusted_ts = (cfg.pause_time - cfg.start_time);
+      last_trusted_d = 0.0;
+    }
+    */
     
     public void handle_no_signal()
     {
@@ -535,23 +650,29 @@ public class FastRunningFriend extends Activity implements LocationListener
     LocationManager lm;
     TextView time_tv,dist_tv,pace_tv,status_tv,time_of_day_tv,battery_tv;
     public static final String PREFS_NAME = "FastRunningFriendPrefs";
+    public static final String TAG = "FastRunningFriend";
 
     Handler timer_h = new Handler();
     Handler tod_timer_h = new Handler();
     ConfigState cfg = new ConfigState();
+    WifiConfiguration wifi_cfg = new WifiConfiguration();
+    WifiManager wifi = null;
     GPSCoordBuffer coord_buf = new GPSCoordBuffer(cfg);
     protected long dist_uppdate_ts = 0;
     protected DistInfo dist_info = new DistInfo();
     protected enum TimerState {RUNNING,PAUSED,INITIAL;}
     protected enum TimerAction {START,SPLIT,PAUSE,RESET,RESUME,START_GPS,STOP_GPS,
-      IGNORE,PASS;}
+      IGNORE,MENU,PASS;}
     protected enum ButtonCode {START,SPLIT,IGNORE,BACK;};
     
     TimerState timer_state = TimerState.INITIAL; 
     boolean gps_running = false;
+    int wifi_id = -1;
+    boolean wifi_on = false;
     Calendar cal = Calendar.getInstance();
     protected long dist_update_ts = 0;
     public native void set_system_time(long t_ms);
+    MenuInflater menu_inflater = null;
     
     BroadcastReceiver battery_receiver = new BroadcastReceiver() {
         int scale = -1;
@@ -658,6 +779,182 @@ public class FastRunningFriend extends Activity implements LocationListener
           update_status("Directory " + cfg.data_dir + 
            " does not exist and could not be created, will not save data");
         }
+        else
+        {
+          if (!cfg.read_config("default"))
+            update_status("Error reading config file");
+          cfg.write_config("test");
+        }
+        
+        init_menu();
+        
+        try
+        {
+          wifi_init();
+        }
+        catch (Exception e)
+        {
+          Log.e(TAG, "WiFi Exception:" + e);
+        }
+    }
+    
+   @Override
+    public boolean onContextItemSelected(MenuItem item) 
+    {
+      switch (item.getItemId())
+      {
+        case R.id.menu_reset:
+          switch (timer_state)
+          {
+            case INITIAL:
+              finish();
+              break;
+            default:
+              reset_timer();
+              break;
+          }
+          break;
+        case R.id.menu_wifi: 
+          if (wifi_on)
+            wifi_disconnect();
+          else
+            wifi_connect();
+          break;
+      }
+      return super.onContextItemSelected(item);
+    }
+    
+    @Override
+    public void onCreateContextMenu(ContextMenu menu, View v,ContextMenuInfo menuInfo) 
+    {  
+      super.onCreateContextMenu(menu, v, menuInfo); 
+      menu_inflater.inflate(R.layout.menu,menu);
+      update_menu_items(menu);
+    }  
+    
+    public void start_config_daemon()
+    {
+      new Thread(new Runnable()
+        {
+          public void run()
+          {
+            cfg.run_daemon();
+          }
+        }).start();  
+    }
+    
+    public void stop_config_daemon()
+    {
+      cfg.stop_daemon();
+    }
+    
+    public void update_menu_items(Menu menu)
+    {
+      MenuItem reset_item = menu.findItem(R.id.menu_reset);
+      MenuItem wifi_item = menu.findItem(R.id.menu_wifi);
+      
+      if (reset_item != null)
+      {
+        switch (timer_state)
+        {
+          case INITIAL:
+            reset_item.setTitle("Exit");
+            break;
+          default:
+            reset_item.setTitle("Reset");
+            break;
+        }
+      }
+      
+      if (wifi_item != null)
+      {
+        wifi_item.setTitle(wifi_on ? "Turn Off WiFi" : "Turn On WiFi");
+        Log.d(TAG, "Fixed wifi_item");
+      }
+    }
+    
+    public void show_menu()
+    {
+      openContextMenu(time_tv);
+    }
+    
+    public void init_menu()
+    {
+      menu_inflater = getMenuInflater();
+      registerForContextMenu(time_tv);      
+    }
+    
+    public void wifi_scan()
+    {
+      if (wifi == null)
+        return;
+      
+      wifi.startScan();
+    }
+
+    public void wifi_init_open()
+    {
+      wifi_cfg.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+    }
+    
+    public void wifi_init_wpa()
+    {
+      wifi_cfg.preSharedKey = cfg.get_wifi_key(64);
+      wifi_cfg.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.OPEN);
+      wifi_cfg.allowedProtocols.set(WifiConfiguration.Protocol.WPA); // For WPA
+      wifi_cfg.allowedProtocols.set(WifiConfiguration.Protocol.RSN); // For WPA2
+      wifi_cfg.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
+      wifi_cfg.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_EAP);
+      wifi_cfg.allowedPairwiseCiphers.set(WifiConfiguration.PairwiseCipher.TKIP);
+      wifi_cfg.allowedPairwiseCiphers.set(WifiConfiguration.PairwiseCipher.CCMP);
+      wifi_cfg.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.TKIP);
+      wifi_cfg.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.CCMP);      
+    }
+    
+    public void wifi_init_wep()
+    {
+      wifi_cfg.wepKeys[0] = cfg.get_wifi_key(10, 26, 58);
+      wifi_cfg.hiddenSSID = true;
+      wifi_cfg.status = WifiConfiguration.Status.ENABLED;  
+      wifi_cfg.wepTxKeyIndex = 0;
+      wifi_cfg.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.SHARED);
+      wifi_cfg.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+      wifi_cfg.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.TKIP);
+      wifi_cfg.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.CCMP);
+      wifi_cfg.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.WEP40);
+      wifi_cfg.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.WEP104);
+    }
+    
+    public void wifi_init()
+    {
+      if (cfg.wifi_ssid.length() == 0)
+      {
+        update_status("WiFi not configured");
+        return;
+      }
+      
+      wifi = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+      
+      if (wifi == null)
+      {
+        update_status("WiFi Manager not available");
+        return;
+      }
+      
+      wifi_cfg.SSID = "\"" + cfg.wifi_ssid + "\"";
+      List<WifiConfiguration> configs = wifi.getConfiguredNetworks();
+      
+      for (WifiConfiguration cfg: configs)
+      {
+        if (cfg.SSID.equals(wifi_cfg.SSID))
+        {
+          wifi_cfg.networkId = cfg.networkId;
+        }
+      }
+      
+      IntentFilter i_f = new IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION);
+      i_f.addAction(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
+      registerReceiver(wifi_receiver, i_f);
     }
     
     public void test_gps_bug()
@@ -700,6 +997,183 @@ public class FastRunningFriend extends Activity implements LocationListener
       
       coord_buf.push(arg0);
     }
+    
+    public boolean wifi_connect_low()
+    {
+      try
+      {
+        if ((wifi_id = wifi.updateNetwork(wifi_cfg)) == -1)
+        {  
+          if ((wifi_id = wifi.addNetwork(wifi_cfg)) == -1)
+          {  
+            update_status("Error adding wireless network");
+            return false;
+          }  
+          
+          Log.d(TAG, "wifi_id = " + wifi_id);
+        }  
+  
+        if (wifi.enableNetwork(wifi_id, true))
+        {  
+          update_status("Enabled " + cfg.wifi_ssid + " wifi");
+          start_config_daemon();
+          return true;
+        }  
+        else
+          update_status("Failed to enable wifi network");
+      }
+      catch (Exception e)
+      {
+        update_status("Wifi error");
+        Log.e(TAG,"Wifi Exception: " + e);
+      }
+      
+      return false;
+    }
+    
+    public boolean wifi_connect()
+    {
+      if (wifi == null)
+      {
+        update_status("WiFi not configured");
+        return false;
+      }
+      
+      try
+      {
+        if (!wifi.isWifiEnabled())
+        {
+          update_status("Enabling wifi");
+          if (wifi.setWifiEnabled(true))
+            update_status("Wifi enabled");
+          else
+          {
+            update_status("Failed to enable Wifi");
+            return false;
+          }
+        }
+        
+        return (wifi_on = true);
+      }
+      catch (Exception e)
+      {
+        update_status("Error in Wifi connect");
+        Log.e(TAG,"WiFi Exception: " + e);
+      }
+      return false;
+    }
+    
+    public boolean wifi_disconnect()
+    {
+      if (wifi == null)
+        return false;
+      
+      try
+      {
+        if (wifi.disconnect())
+          update_status("Wifi disconnected");
+        else
+          update_status("Wifi disconnect failed");
+        
+        if (wifi.setWifiEnabled(false))
+        {
+          update_status("Wifi disabled");
+          stop_config_daemon();
+          wifi_on = false;
+          return true;
+        }
+        else
+        {
+          update_status("Wifi disable failed");
+          return false;
+        }
+      }
+      catch (Exception e)
+      {
+        update_status("Wifi Error");
+        Log.e(TAG, "WiFi Exception: " + e);
+        return false;
+      }
+    }
+    
+    private void wifi_scan_low()
+    {
+      if (wifi == null)
+        return;
+      
+      List<ScanResult> nl =  wifi.getScanResults();
+      boolean found_match = false;
+      
+      for (ScanResult n : nl)
+      {
+        Log.d(TAG,"network '" + n.SSID + "'" + ", cap='" + n.capabilities + "'");
+        String quoted_network = "\"" + n.SSID + "\"";
+        
+        if (quoted_network.equals(wifi_cfg.SSID))
+        {
+          if (n.capabilities.contains("[WEP]"))
+            wifi_init_wep();
+          else if (n.capabilities.contains("[WPA]"))
+            wifi_init_wpa();
+          else
+            wifi_init_open();
+          
+          found_match = true;
+        }
+      }
+      
+      if (found_match)
+        wifi_connect_low();
+      else
+        update_status("No configured WiFi networks in range");
+    }
+    
+    private BroadcastReceiver wifi_receiver = new BroadcastReceiver()
+    {
+      @Override
+      public void onReceive(Context context, Intent intent) 
+      {
+        if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction()))
+        {
+          if (wifi_on)
+            wifi_scan_low();
+          else
+          {  
+            update_status("Spurious WiFi scan");
+            wifi_disconnect();
+          }  
+          return;
+        }
+        
+        int state = intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE,
+                      WifiManager.WIFI_STATE_UNKNOWN);
+        
+        switch (state)
+        {
+           case WifiManager.WIFI_STATE_DISABLED:
+             update_status("WIFI DISABLED");
+             break;
+           case WifiManager.WIFI_STATE_DISABLING:
+             update_status("WIFI DISABLING");
+             break;
+           case WifiManager.WIFI_STATE_ENABLED:
+             update_status("WIFI ENABLED");
+             if (wifi_on)
+             {
+               wifi_scan();
+             }  
+             else
+               wifi_disconnect();
+             break;
+           case WifiManager.WIFI_STATE_ENABLING:
+             update_status("WIFI ENABLING");
+             break;
+           default:
+             update_status("WIFI STATE UNKNOWN");
+             break;         
+        }
+      }
+    };
     
     public void onProviderDisabled(String arg0) 
     {
@@ -745,6 +1219,9 @@ public class FastRunningFriend extends Activity implements LocationListener
           return false;
         case PAUSE:
           pause_timer();
+          return false;
+        case MENU:
+          show_menu();
           return false;
         case IGNORE:
           return false;
@@ -809,7 +1286,7 @@ public class FastRunningFriend extends Activity implements LocationListener
         
         case BACK:
           return timer_state == TimerState.INITIAL ? 
-            TimerAction.PASS : TimerAction.IGNORE;
+            TimerAction.MENU : TimerAction.IGNORE;
         case IGNORE:
         default:
           break;
@@ -832,8 +1309,10 @@ public class FastRunningFriend extends Activity implements LocationListener
     {
         Location loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
         lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 
-            500, 1, this);
+            cfg.gps_update_interval, 1.0f, this);
         String status_msg = "Searching for GPS signal";
+        
+        Log.i(TAG,"GPS updates every " + cfg.gps_update_interval + " ms");
         
         if (loc != null)
           status_msg += String.format(", last %.3f,%.3f",loc.getLatitude(),
@@ -857,15 +1336,22 @@ public class FastRunningFriend extends Activity implements LocationListener
       cfg.pause_time = get_start_time();
       timer_state = TimerState.PAUSED;
       suspend_timer_display();
+      coord_buf.handle_pause(dist_info);
       post_time(cfg.pause_time-cfg.start_time,time_tv);
-      post_pace(0);
+      show_dist_info(dist_info);
       coord_buf.debug_log("Timer paused");
     }   
     
     public void onDestroy()
     {
       stop_gps();
+      wifi_disconnect();
+      stop_config_daemon();
       unregisterReceiver(battery_receiver);
+      
+      if (wifi != null)
+        unregisterReceiver(wifi_receiver);
+      
       super.onDestroy();
     }
       
@@ -874,7 +1360,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       cfg.save_time();
       cfg.pause_time = cfg.start_time ;
       cfg.resume_time = 0;
-      coord_buf.reset();
+      coord_buf.reset(true);
       timer_state = TimerState.INITIAL;
       post_time(0,time_tv);
       post_pace(0);

@@ -11,7 +11,13 @@
 #include <dirent.h>
 #include <asm/ioctl.h>
 #include <errno.h>
+#include <stdarg.h>
+#include <math.h>
+#include <ctype.h>
 #include <linux/android_alarm.h>
+#include "uthash.h"
+#include "config_vars.h"
+#include "http_daemon.h"
 
 static FILE* gps_data_fp = 0, *gps_debug_fp = 0;
 static char gps_data_dir[PATH_MAX+1];
@@ -32,15 +38,68 @@ typedef struct
 } GPS_buf_fields;
 
 static GPS_buf_fields gps_buf_fields;
+static jclass cfg_class;
+static jfieldID data_dir_id;
 
 static int init_gps_buf_fields(JNIEnv* env, GPS_buf_fields* fields);
 static int remove_expired_files(JNIEnv* env, jobject* this_obj, const char* dir_name);
+static int has_ext(const char* fname, const char* ext);
+static int get_config_path(JNIEnv* env, jobject* cfg_obj, char* path, int max_path, char* fmt, ...);
 
 
 #define COORD_ARR_SIG "[Lcom/fastrunningblog/FastRunningFriend/GPSCoord;"
 #define COORD_BUF_CLASS "com/fastrunningblog/FastRunningFriend/GPSCoordBuffer"
 #define CFG_CLASS "com/fastrunningblog/FastRunningFriend/ConfigState"
 #define COORD_CLASS "com/fastrunningblog/FastRunningFriend/GPSCoord"
+
+
+static int write_config_double(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp);
+static int write_config_angle(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp);
+static int write_config_pace(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp);
+static int write_config_long(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp);
+static int write_config_int(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp);
+static int write_config_str(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp);
+
+static int read_config_int(JNIEnv* env,void* config_obj,Config_var* var, const char* val);
+static int read_config_double(JNIEnv* env,void* config_obj,Config_var* var, const char* val);
+static int read_config_angle(JNIEnv* env,void* config_obj,Config_var* var, const char* val);
+static int read_config_pace(JNIEnv* env,void* config_obj,Config_var* var, const char* val);
+static int read_config_long(JNIEnv* env,void* config_obj,Config_var* var, const char* val);
+static int read_config_str(JNIEnv* env,void* config_obj,Config_var* var, const char* val);
+
+
+static int write_config_double_low(JNIEnv* env, void* config_obj, Config_var* var, 
+                                   FILE* fp, Config_var_type type);
+static int read_config_double_low(JNIEnv* env, void* config_obj, Config_var* var, 
+                                   const char* val_str, Config_var_type type);
+                                   
+static int init_config_vars(JNIEnv *env);     
+static jboolean write_config(JNIEnv* env, jobject this_obj, const char* profile_name_s);
+static int start_config_daemon();
+
+
+
+Config_var config_vars[] =
+{
+  {"min_d_last_trusted", 0, "D", write_config_double, read_config_double},
+  {"max_d_last_trusted", 0, "D", write_config_double, read_config_double},
+  {"max_pace_diff", 0, "D", write_config_double, read_config_double},
+  {"top_pace_t", "top_pace", "D", write_config_pace, read_config_pace},
+  {"start_pace_t", "start_pace", "D", write_config_pace, read_config_pace},
+  {"expire_files_days", 0, "I",  write_config_int, read_config_int},
+  {"max_t_no_signal", 0, "J", write_config_long, read_config_long},
+  {"dist_update_interval", 0, "J", write_config_long, read_config_long},
+  {"gps_update_interval", 0, "J", write_config_long, read_config_long},
+  {"min_cos", "max_angle", "D", write_config_angle, read_config_angle},
+  {"min_neighbor_cos", "max_neighbor_angle", "D", write_config_angle, read_config_angle},
+  {"wifi_ssid", 0, "Ljava/lang/String;", write_config_str, read_config_str},
+  {"wifi_key", 0, "Ljava/lang/String;", write_config_str, read_config_str},
+  {"gps_disconnect_interval", 0, "J", write_config_long, read_config_long},
+  {"kill_bad_guys", 0, "Ljava/lang/String;", write_config_str, read_config_str},
+  {0,0,0}
+};   
+
+Config_var* config_h = 0;
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved)
 {
@@ -60,7 +119,18 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved)
   
   if (init_gps_buf_fields(env,&gps_buf_fields))
     return -1;
-   
+  
+  cfg_class = gps_buf_fields.cfg_class;
+  
+  if (!(data_dir_id = (*env)->GetFieldID(env,cfg_class,"data_dir","Ljava/lang/String;")))
+  {  
+    LOGE("Could not find ConfigState.data_dir member");
+    return -1;
+  }
+  
+  if (init_config_vars(env))
+    return -1;
+  
   return JNI_VERSION_1_4;
 }
 
@@ -86,6 +156,27 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved)
      return -1;\
    }\
 
+static int init_config_vars(JNIEnv *env)
+{
+  Config_var *v;
+  
+  for (v = config_vars; v->name; v++)
+  {
+    if (!v->lookup_name)
+      v->lookup_name = v->name;
+    
+    
+    if (!(v->var_id = (*env)->GetFieldID(env,cfg_class,v->name,v->java_type)))
+    {
+      LOGE("Cannot find ConfigState.%s member", v->name);
+      return -1;
+    }
+    
+    HASH_ADD_KEYPTR(hh,config_h,v->lookup_name,strlen(v->lookup_name),v);
+  }
+  
+  return 0;
+}
 
 static int init_gps_buf_fields(JNIEnv* env, GPS_buf_fields* fields )
 {
@@ -151,6 +242,205 @@ static int init_gps_buf_fields(JNIEnv* env, GPS_buf_fields* fields )
 #define SET_BUF_MEMBER(name,type)  (*env)->Set##type##Field(env,this_obj, \
   gps_buf_fields.name ## _id,name)
 
+static int write_config_double(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp)
+{
+  return write_config_double_low(env,config_obj,var,fp,VAR_TYPE_NORMAL);
+}
+
+static int write_config_angle(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp)
+{
+  return write_config_double_low(env,config_obj,var,fp,VAR_TYPE_ANGLE);
+}
+
+static int write_config_pace(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp)
+{
+  return write_config_double_low(env,config_obj,var,fp,VAR_TYPE_PACE);
+}
+
+
+static int write_config_double_low(JNIEnv* env, void* config_obj, Config_var* var, FILE* fp,
+                                   Config_var_type type)
+{
+  jdouble val;
+  const char* var_name = var->name;
+  
+  if (!fp)
+  {
+    LOGE("Config file descriptor is not open");
+    return -1;
+  }
+  
+  val = (*env)->GetDoubleField(env,(jobject)config_obj,var->var_id);
+  
+  switch (type)
+  {
+    case VAR_TYPE_ANGLE:
+    {
+      var_name = var->lookup_name;
+      val = acos(val) * 180.0/M_PI;
+      break;
+    }  
+    case VAR_TYPE_PACE:
+    {
+      int mm,ss,len,pace_s;
+      pace_s = (int)val/1000;
+      mm = pace_s / 60;
+      ss = pace_s % 60;
+      fprintf(fp,"%s=%02d:%02d\n",var->lookup_name,mm,ss);
+      return 0;
+    }
+    default:
+      break;
+  }
+  
+  fprintf(fp,"%s=%g\n",var_name,val);
+  return 0;
+}
+
+static int write_config_str(JNIEnv* env,void* config_obj,Config_var* var, FILE* fp)
+{
+  jstring str_obj;
+  const char* s;
+  
+  if (!fp)
+  {
+    LOGE("Config file descriptor is not open");
+    return -1;
+  }
+
+  if (!(str_obj = (jstring)(*env)->GetObjectField(env,config_obj,var->var_id)))
+  {
+    LOGE("Error reading string object for ConfigState.%s", var->name);
+    return -1;
+  }
+  
+  if (!(s = (*env)->GetStringUTFChars(env, str_obj, NULL)))
+  {
+    LOGE("Could not get Java string");
+    return -1;
+  }
+  
+  fprintf(fp,"%s=%s\n", var->lookup_name, s);
+  (*env)->ReleaseStringUTFChars(env,str_obj,NULL);
+  (*env)->DeleteLocalRef(env,str_obj);
+  return 0;
+}
+
+static int write_config_int(JNIEnv* env, void* config_obj, Config_var* var, FILE* fp)
+{
+  jint val;
+  
+  if (!fp)
+  {
+    LOGE("Config file descriptor is not open");
+    return -1;
+  }
+  
+  val = (*env)->GetIntField(env,(jobject)config_obj,var->var_id);
+  fprintf(fp,"%s=%d\n",var->name,val);
+  return 0;
+}
+
+static int write_config_long(JNIEnv* env, void* config_obj, Config_var* var, FILE* fp)
+{
+  jlong val;
+  
+  if (!fp)
+  {
+    LOGE("Config file descriptor is not open");
+    return -1;
+  }
+  
+  val = (*env)->GetLongField(env,(jobject)config_obj,var->var_id);
+  fprintf(fp,"%s=%lld\n",var->name,val);
+  return 0;
+}
+
+static int read_config_str(JNIEnv* env,void* config_obj,Config_var* var, const char* val)
+{
+  jstring str_obj = (*env)->NewStringUTF(env,val);
+  
+  if (!str_obj)
+  {
+    LOGE("Error creating string for %s", var->name);
+    return -1;
+  }
+  
+  
+  (*env)->SetObjectField(env,(jobject)config_obj,var->var_id,str_obj);
+  
+  if ((*env)->ExceptionOccurred(env))
+  {
+    LOGE("Error setting ConfigState.%s", var->name);
+    return -1;
+  }
+  
+  return 0;
+}
+
+static int read_config_int(JNIEnv* env,void* config_obj,Config_var* var, const char* val)
+{
+  (*env)->SetIntField(env,(jobject)config_obj,var->var_id,atoi(val));
+  return 0;
+}
+
+static int read_config_long(JNIEnv* env,void* config_obj,Config_var* var, const char* val)
+{
+  (*env)->SetLongField(env,(jobject)config_obj,var->var_id,atoll(val));
+  return 0;
+}
+
+static int read_config_double(JNIEnv* env,void* config_obj,Config_var* var, const char* val)
+{
+  return read_config_double_low(env,config_obj,var,val,VAR_TYPE_NORMAL);
+}
+
+static int read_config_angle(JNIEnv* env,void* config_obj,Config_var* var, const char* val)
+{
+  return read_config_double_low(env,config_obj,var,val,VAR_TYPE_ANGLE);
+}
+
+static int read_config_pace(JNIEnv* env,void* config_obj,Config_var* var, const char* val)
+{
+  return read_config_double_low(env,config_obj,var,val,VAR_TYPE_PACE);
+}
+
+static int read_config_double_low(JNIEnv* env, void* config_obj, Config_var* var, 
+                                   const char* val_str, Config_var_type type)
+{
+  jdouble val;
+  
+  switch (type)
+  {
+    case VAR_TYPE_ANGLE:
+      val = cos(atof(val_str) * M_PI/180.0);
+      break;
+    case VAR_TYPE_PACE:
+    {
+      const char* p = strchr(val_str,':');
+      int mm,ss;
+      
+      if (!p)
+      {
+        LOGE("Error parsing pace for %s", var->lookup_name);
+        return -1;
+      }
+      
+      mm = atoi(val_str);
+      ss = atoi(p+1);
+      val = (double)(mm * 60 + ss) * 1000.0;
+      break;
+    }
+    default:
+      val = atof(val_str);
+      break;
+  }
+  
+  (*env)->SetDoubleField(env,(jobject)config_obj,var->var_id,val);
+  return 0;
+}
+
+
 static jboolean flush_gps_buffer(JNIEnv* env, jobject this_obj)
 {
   jobjectArray buf;
@@ -205,6 +495,62 @@ static jboolean flush_gps_buffer(JNIEnv* env, jobject this_obj)
   return 1;
 }
 
+static int has_ext(const char* fname, const char* ext)
+{
+  const char*p = strrchr(fname,'.');
+  
+  if (!p || strcmp(p + 1,ext))
+    return 0;
+  
+  return 1;
+}
+
+static int get_config_path(JNIEnv* env, jobject* cfg_obj, char* path, int max_path, char* fmt, ...)
+{
+  va_list ap;
+  jstring data_dir = 0;
+  const char* data_dir_s = 0;
+  char* p;
+  int data_dir_len = 0;
+  va_start(ap,fmt);
+  
+  if (!(data_dir = (jstring)(*env)->GetObjectField(env,cfg_obj,data_dir_id)))
+  {
+    LOGE("NULL value for data_dir string object");
+    return 1;
+  }
+  
+  if (!(data_dir_s = (*env)->GetStringUTFChars(env,data_dir,0)))
+  {
+    LOGE("data_dir_s == NULL");
+    goto err;
+  }
+  
+  if ((data_dir_len = strlen(data_dir_s)) >= max_path-1)
+  {
+    LOGE("data_dir too long");
+    goto err;
+  }
+  
+  memcpy(path,data_dir_s,data_dir_len);
+  p = path + data_dir_len;
+  
+  if (p[-1] != '/')
+    *p++ = '/';
+  
+  vsnprintf(p, max_path - data_dir_len - 1, fmt,ap);
+  
+err:
+  if (data_dir_s)
+    (*env)->ReleaseStringUTFChars(env,data_dir,0);
+  
+  if (data_dir)
+    (*env)->DeleteLocalRef(env,data_dir);
+  
+  return 0;
+}
+
+
 static int remove_expired_files(JNIEnv* env, jobject* this_obj, const char* dir_name)
 {
   jobject cfg;
@@ -228,6 +574,9 @@ static int remove_expired_files(JNIEnv* env, jobject* this_obj, const char* dir_
   {
     struct stat s;
     char fname[PATH_MAX+1];
+    
+    if (has_ext(dir_e->d_name,"cnf"))
+      continue;
     
     snprintf(fname,sizeof(fname),"%s/%s",dir_name,dir_e->d_name);
     
@@ -346,6 +695,30 @@ Java_com_fastrunningblog_FastRunningFriend_GPSCoordBuffer_open_1data_1file(JNIEn
 }
 
 JNIEXPORT jboolean
+Java_com_fastrunningblog_FastRunningFriend_ConfigState_run_1daemon(JNIEnv* env,
+                                                  jobject this_obj)
+{
+  LOGE("Starting config daemon");
+  
+  if (http_run_daemon())
+  {
+    LOGE("Error starting config daemon");
+    return 0;
+  }
+  return 1;
+}
+
+JNIEXPORT jboolean
+Java_com_fastrunningblog_FastRunningFriend_ConfigState_stop_1daemon(JNIEnv* env,
+                                                  jobject this_obj)
+{
+  LOGE("stopping HTTPD daemon");
+  http_stop_daemon();
+  return 1;
+}
+
+
+JNIEXPORT jboolean
 Java_com_fastrunningblog_FastRunningFriend_GPSCoordBuffer_init_1data_1dir( JNIEnv* env,
                                                   jobject this_obj, jstring dir_name_str )
 {
@@ -361,10 +734,22 @@ Java_com_fastrunningblog_FastRunningFriend_GPSCoordBuffer_init_1data_1dir( JNIEn
   
   if (stat(dir_name,&s))
   {
+    jobject cfg_obj;
+    
     if (mkdir(dir_name,0755))
       goto err;
     
     dir_created = 1;
+    
+    if (!(cfg_obj = (*env)->GetObjectField(env,this_obj,gps_buf_fields.cfg_id)))
+    {
+      LOGE("Could not find config object while writing default config file");
+      goto done;
+    }
+    
+    if (!write_config(env,cfg_obj,"default"))
+      LOGE("Error writing default config file");
+    
     goto done;
   }  
   
@@ -415,3 +800,116 @@ JNIEXPORT void JNICALL Java_com_fastrunningblog_FastRunningFriend_GPSCoordBuffer
   
   (*env)->ReleaseStringUTFChars(env,msg,msg_s);
 }
+
+JNIEXPORT jboolean JNICALL Java_com_fastrunningblog_FastRunningFriend_ConfigState_read_1config
+  (JNIEnv *env, jobject this_obj, jstring profile_name)
+{
+  FILE* fp = 0;
+  const char* profile_name_s = (*env)->GetStringUTFChars(env,profile_name,0);
+  char path[PATH_MAX+1];
+  jboolean res = 0;
+  Config_var* cfg_var_p;
+  
+  if (!profile_name_s)
+    return 0;
+  
+  if (get_config_path(env,this_obj,path,sizeof(path),"%s.cnf",profile_name_s))
+    goto err;
+  
+  if (!(fp = fopen(path,"r")))
+  {
+    LOGE("Could not open config file %s for writing", path);
+    goto err;
+  }
+
+  while (!feof(fp))
+  {
+    char buf[512];
+    char* p,*p_end;
+    Config_var* cfg_v;
+    
+    if (!fgets(buf,sizeof(buf),fp))
+      break;
+    
+    if (*buf == '#')
+      continue;
+    
+    if (!(p = strchr(buf,'=')))
+    {
+      LOGE("Error in config file on line '%s'", buf);
+      goto err;
+    }
+    p_end = buf + strlen(buf) - 1;
+    *p = 0;
+    
+    HASH_FIND_STR(config_h, buf, cfg_v);
+    
+    if (!cfg_v)
+    {
+      LOGE("Unknown variable '%s'", buf);
+      continue;
+    }
+    
+    
+    for ( ; p_end > buf && isspace(*p_end); p_end--); 
+    
+    p_end[1] = 0;
+    (*cfg_v->reader)(env, this_obj, cfg_v, p + 1);
+  }
+  
+  res = 1;
+err:  
+  (*env)->ReleaseStringUTFChars(env,profile_name,profile_name_s);
+  
+  if (fp)
+    fclose(fp);
+  
+  return res;
+}
+  
+
+JNIEXPORT jboolean JNICALL Java_com_fastrunningblog_FastRunningFriend_ConfigState_write_1config
+  (JNIEnv *env, jobject this_obj, jstring profile_name)
+{
+  jboolean res;
+  const char* profile_name_s = (*env)->GetStringUTFChars(env,profile_name,0);
+  res = write_config(env,this_obj,profile_name_s);
+  (*env)->ReleaseStringUTFChars(env,profile_name,profile_name_s);
+  return res;
+}
+
+static jboolean write_config(JNIEnv* env, jobject this_obj, const char* profile_name_s)
+{
+  FILE* fp = 0;
+  char path[PATH_MAX+1];
+  jboolean res = 0;
+  Config_var* cfg_var_p;
+  
+  if (!profile_name_s)
+    return 0;
+  
+  if (get_config_path(env,this_obj,path,sizeof(path),"%s.cnf",profile_name_s))
+    goto err;
+  
+  if (!(fp = fopen(path,"w")))
+  {
+    LOGE("Could not open config file %s for writing", path);
+    goto err;
+  }
+  
+  for (cfg_var_p = config_vars; cfg_var_p->name; cfg_var_p++)
+  {
+    if ((*cfg_var_p->writer)(env,this_obj,cfg_var_p,fp))
+      goto err;
+  }
+  
+  res = 1;
+err:  
+  
+  if (fp)
+    fclose(fp);
+  
+  return res;
+}
+
+

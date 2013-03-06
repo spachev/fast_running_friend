@@ -15,9 +15,21 @@
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
+LOCAL_MODULE    := microhttpd
+LOCAL_SRC_FILES := libmicrohttpd/base64.c libmicrohttpd/basicauth.c libmicrohttpd/connection.c \
+  libmicrohttpd/daemon.c libmicrohttpd/digestauth.c \
+  libmicrohttpd/internal.c libmicrohttpd/md5.c libmicrohttpd/memorypool.c \
+  libmicrohttpd/postprocessor.c libmicrohttpd/reason_phrase.c libmicrohttpd/response.c \
+  libmicrohttpd/tsearch.c
+  
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/libmicrohttpd
+include $(BUILD_STATIC_LIBRARY)
 
+include $(CLEAR_VARS)
 LOCAL_MODULE    := fast_running_friend 
-LOCAL_SRC_FILES := fast_running_friend.c
+LOCAL_SRC_FILES := fast_running_friend.c http_daemon.c
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/libmicrohttpd
+LOCAL_STATIC_LIBRARIES := microhttpd
 LOCAL_LDLIBS    := -lm -llog 
 
 include $(BUILD_SHARED_LIBRARY)
