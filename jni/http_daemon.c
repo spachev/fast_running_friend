@@ -7,13 +7,21 @@
 
 #include <jni.h>
 #include "uthash.h"
+#include "utstring.h"
 #include "config_vars.h"
-#include <android/log.h>
+#include "log.h"
 
 
 static int exit_requested = 0;
-#define LOG_TAG "FastRunningFriend HTTPD"
-#define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
+static JNIEnv* jni_env = 0;
+static jobject* jni_cfg = 0;
+static int httpd_running = 0;
+
+static UT_string* get_config_form(const char* msg);
+
+static int init_post_config();
+static int end_post_config();
+
 
 /**
  * Invalid method page.
@@ -76,17 +84,7 @@ struct Session
    * Time when this session was last active.
    */
   time_t start;
-
-  /**
-   * String submitted via form.
-   */
-  char value_1[64];
-
-  /**
-   * Another value submitted via form.
-   */
-  char value_2[64];
-
+  const char* msg;
 };
 
 
@@ -122,6 +120,51 @@ struct Request
  */
 static struct Session *sessions;
 
+#define CONFIG_PAGE_TITLE "FastRunningFriend Configuration"
+
+static UT_string* get_config_form(const char* msg)
+{
+  UT_string* res;
+  Config_var* cfg_var_p;
+  
+  // aborts on malloc() failure, which is OK - if things are so bad that malloc fails it is
+  // OK to exit for now. TODO: fix so there is clean exit on malloc() failure
+  utstring_new(res);
+  utstring_printf(res, "<html><head><title>" CONFIG_PAGE_TITLE 
+    "</title></head><body><h1>" CONFIG_PAGE_TITLE "</h1>");
+ 
+  if (!jni_env || !jni_cfg)
+  {
+    utstring_printf(res, "Internal error</body></html>");
+    return res;
+  }
+    
+  if (msg && *msg)
+  {
+    utstring_printf(res, "<p>%s</p>", msg);
+  }
+  
+  utstring_printf(res,"<form method=post><table border=1>");
+  
+  for (cfg_var_p = config_vars; cfg_var_p->name; cfg_var_p++)
+  {
+    char buf[512];
+    if ((*cfg_var_p->printer)(jni_env,jni_cfg,cfg_var_p,buf,sizeof(buf)))
+      goto err;
+    //TODO: html escape of buf
+    utstring_printf(res,"<tr><td>%s</td><td>"
+       "<input name=\"%s\"type=text size=40 value=\"%s\">\n",
+       cfg_var_p->lookup_name,cfg_var_p->lookup_name,buf);
+  }
+  
+  utstring_printf(res,"<tr><td colspan=2 align=center>"
+    "<input type=submit name=submit value='Update Configuration'> </td></tr></table>\n" 
+    "</form>\n</body></html>\n");
+  return res;
+err:
+  utstring_free(res);
+  return 0;
+}
 
 
 
@@ -135,32 +178,33 @@ get_session (struct MHD_Connection *connection)
   struct Session *ret;
   const char *cookie;
 
-  cookie = MHD_lookup_connection_value (connection,
+  cookie ;
+  if ((cookie = MHD_lookup_connection_value (connection,
           MHD_COOKIE_KIND,
-          COOKIE_NAME);
-  if (cookie != NULL)
-    {
+          COOKIE_NAME)))
+  {
       /* find existing session */
       ret = sessions;
-      while (NULL != ret)
-  {
-    if (0 == strcmp (cookie, ret->sid))
-      break;
-    ret = ret->next;
-  }
+      
+      while (ret)
+      {
+        if (0 == strcmp (cookie, ret->sid))
+          break;
+        ret = ret->next;
+      }
       if (NULL != ret)
-  {
-    ret->rc++;
-    return ret;
+      {
+        ret->rc++;
+        return ret;
+      }
   }
-    }
-  /* create fresh session */
-  ret = calloc (1, sizeof (struct Session));
-  if (NULL == ret)
-    {           
-      fprintf (stderr, "calloc error: %s\n", strerror (errno));
-      return NULL; 
-    }
+    
+ /* create fresh session */
+  if (!(ret = calloc (1, sizeof (struct Session))))
+  {           
+    fprintf (stderr, "calloc error: %s\n", strerror (errno));
+    return NULL; 
+  }
   /* not a super-secure way to generate a random session ID,
      but should do for a simple example... */
   snprintf (ret->sid,
@@ -247,40 +291,6 @@ add_session_cookie (struct Session *session,
 }
 
 
-/**
- * Handler that returns a simple static HTTP page that
- * is passed in via 'cls'.
- *
- * @param cls a 'const char *' with the HTML webpage to return
- * @param mime mime type to use
- * @param session session handle 
- * @param connection connection to use
- */
-static int
-serve_simple_form (const void *cls,
-       const char *mime,
-       struct Session *session,
-       struct MHD_Connection *connection)
-{
-  int ret;
-  const char *form = cls;
-  struct MHD_Response *response;
-
-  /* return static form */
-  response = MHD_create_response_from_buffer (strlen (form),
-                (void *) form,
-                MHD_RESPMEM_PERSISTENT);
-  add_session_cookie (session, response);
-  MHD_add_response_header (response,
-         MHD_HTTP_HEADER_CONTENT_ENCODING,
-         mime);
-  ret = MHD_queue_response (connection, 
-          MHD_HTTP_OK, 
-          response);
-  MHD_destroy_response (response);
-  return ret;
-}
-
 static int
 handle_page (const void *cls,
         const char *mime,
@@ -288,19 +298,18 @@ handle_page (const void *cls,
         struct MHD_Connection *connection)
 {
   int ret;
-  const char *form = "Hello, world\n";
   char *reply;
+  UT_string* reply_s;
   struct MHD_Response *response;
-
-  reply = malloc (strlen (form) + strlen (session->value_1) + 1);
-  snprintf (reply,
-      strlen (form) + strlen (session->value_1) + 1,
-      form,
-      session->value_1);
+  
+  if (!(reply_s = get_config_form(session->msg)))
+    return MHD_NO;
+  
+  reply = utstring_body(reply_s);
   /* return static form */
   response = MHD_create_response_from_buffer (strlen (reply),
                 (void *) reply,
-                MHD_RESPMEM_MUST_FREE);
+                MHD_RESPMEM_MUST_COPY);
   add_session_cookie (session, response);
   MHD_add_response_header (response,
          MHD_HTTP_HEADER_CONTENT_ENCODING,
@@ -309,87 +318,7 @@ handle_page (const void *cls,
           MHD_HTTP_OK, 
           response);
   MHD_destroy_response (response);
-  return ret;
-}
-
-
-
-/**
- * Handler that adds the 'v1' value to the given HTML code.
- *
- * @param cls a 'const char *' with the HTML webpage to return
- * @param mime mime type to use
- * @param session session handle 
- * @param connection connection to use
- */
-static int
-fill_v1_form (const void *cls,
-        const char *mime,
-        struct Session *session,
-        struct MHD_Connection *connection)
-{
-  int ret;
-  const char *form = cls;
-  char *reply;
-  struct MHD_Response *response;
-
-  reply = malloc (strlen (form) + strlen (session->value_1) + 1);
-  snprintf (reply,
-      strlen (form) + strlen (session->value_1) + 1,
-      form,
-      session->value_1);
-  /* return static form */
-  response = MHD_create_response_from_buffer (strlen (reply),
-                (void *) reply,
-                MHD_RESPMEM_MUST_FREE);
-  add_session_cookie (session, response);
-  MHD_add_response_header (response,
-         MHD_HTTP_HEADER_CONTENT_ENCODING,
-         mime);
-  ret = MHD_queue_response (connection, 
-          MHD_HTTP_OK, 
-          response);
-  MHD_destroy_response (response);
-  return ret;
-}
-
-
-/**
- * Handler that adds the 'v1' and 'v2' values to the given HTML code.
- *
- * @param cls a 'const char *' with the HTML webpage to return
- * @param mime mime type to use
- * @param session session handle 
- * @param connection connection to use
- */
-static int
-fill_v1_v2_form (const void *cls,
-     const char *mime,
-     struct Session *session,
-     struct MHD_Connection *connection)
-{
-  int ret;
-  const char *form = cls;
-  char *reply;
-  struct MHD_Response *response;
-
-  reply = malloc (strlen (form) + strlen (session->value_1) + strlen (session->value_2) + 1);
-  snprintf (reply,
-      strlen (form) + strlen (session->value_1) + strlen (session->value_2) + 1,
-      form,
-      session->value_1);
-  /* return static form */
-  response = MHD_create_response_from_buffer (strlen (reply),
-                (void *) reply,
-                MHD_RESPMEM_MUST_FREE);
-  add_session_cookie (session, response);
-  MHD_add_response_header (response,
-         MHD_HTTP_HEADER_CONTENT_ENCODING,
-         mime);
-  ret = MHD_queue_response (connection, 
-          MHD_HTTP_OK, 
-          response);
-  MHD_destroy_response (response);
+  utstring_free(reply_s);
   return ret;
 }
 
@@ -426,19 +355,8 @@ not_found_page (const void *cls,
 }
 
 
-/**
- * List of all pages served by this HTTP server.
- */
-static struct Page pages[] = 
-  {
-    { "/", "text/html",  &fill_v1_form, MAIN_PAGE },
-    { "/2", "text/html", &fill_v1_v2_form, SECOND_PAGE },
-    { "/S", "text/html", &serve_simple_form, SUBMIT_PAGE },
-    { "/F", "text/html", &serve_simple_form, LAST_PAGE },
-    { NULL, NULL, &not_found_page, NULL } /* 404 */
-  };
 
-
+#define MAX_POST_VAR_SIZE 512  
 
 /**
  * Iterator over key-value pairs where the value
@@ -470,39 +388,20 @@ post_iterator (void *cls,
 {
   struct Request *request = cls;
   struct Session *session = request->session;
-
-  if (0 == strcmp ("DONE", key))
-    {
-      fprintf (stdout,
-         "Session `%s' submitted `%s', `%s'\n",
-         session->sid,
-         session->value_1,
-         session->value_2);
-      return MHD_YES;
-    }
-  if (0 == strcmp ("v1", key))
-    {
-      if (size + off > sizeof(session->value_1))
-  size = sizeof (session->value_1) - off;
-      memcpy (&session->value_1[off],
-        data,
-        size);
-      if (size + off < sizeof (session->value_1))
-  session->value_1[size+off] = '\0';
-      return MHD_YES;
-    }
-  if (0 == strcmp ("v2", key))
-    {
-      if (size + off > sizeof(session->value_2))
-  size = sizeof (session->value_2) - off;
-      memcpy (&session->value_2[off],
-        data,
-        size);
-      if (size + off < sizeof (session->value_2))
-  session->value_2[size+off] = '\0';
-      return MHD_YES;
-    }
-  fprintf (stderr, "Unsupported form value `%s'\n", key);
+  Config_var* cfg_v;
+  
+  //LOGE("post_interator: key='%s' value='%-.*s'", key, size, data);
+  HASH_FIND_STR(config_h,key,cfg_v);  
+  
+  if (cfg_v)
+  {
+    if (utstring_len(cfg_v->post_val) + size < MAX_POST_VAR_SIZE)
+    {  
+      utstring_bincpy(cfg_v->post_val,data,size);
+      LOGE("current value for '%s' is '%s'", cfg_v->lookup_name, utstring_body(cfg_v->post_val));
+    }  
+  }
+  
   return MHD_YES;
 }
 
@@ -561,52 +460,62 @@ create_response (void *cls,
   LOGE("In create_response, request=%p", *ptr);
   
   if (!request)
+  {
+    request = calloc (1, sizeof (struct Request));
+    if (!request)
     {
-      request = calloc (1, sizeof (struct Request));
-      if (!request)
-      {
-        LOGE("calloc error: %s\n", strerror (errno));
-        return MHD_NO;
-      }
-      *ptr = request;
-      if (0 == strcmp (method, MHD_HTTP_METHOD_POST))
-      {
-        request->pp = MHD_create_post_processor (connection, 1024,
-                   &post_iterator, request);
-        if (NULL == request->pp)
-          {
-            LOGE("Failed to setup post processor for `%s'\n",
-               url);
-            return MHD_NO; /* internal error */
-          }
-      }
-      return MHD_YES;
+      LOGE("calloc error: %s\n", strerror (errno));
+      return MHD_NO;
     }
-  if (NULL == request->session)
+    *ptr = request;
+    if (0 == strcmp (method, MHD_HTTP_METHOD_POST))
     {
-      request->session = get_session (connection);
-      if (NULL == request->session)
+      request->pp = MHD_create_post_processor (connection, 1024,
+                 &post_iterator, request);
+      if (NULL == request->pp)
       {
-        LOGE("Failed to setup session for `%s'\n",
+        LOGE("Failed to setup post processor for `%s'\n",
            url);
         return MHD_NO; /* internal error */
       }
     }
+    init_post_config();
+    
+    if (request->session)
+      request->session->msg = 0;
+    
+    return MHD_YES;
+  }
+  
+  if (!request->session)
+  {
+    if (!(request->session = get_session (connection)))
+    {
+      LOGE("Failed to setup session for `%s'\n",
+         url);
+      return MHD_NO; /* internal error */
+    }
+  }
+  
   session = request->session;
   session->start = time (NULL);
+  session->msg = 0;
+  
   if (0 == strcmp (method, MHD_HTTP_METHOD_POST))
     {      
       /* evaluate POST data */
-      MHD_post_process (request->pp,
-      upload_data,
-      *upload_data_size);
-      if (0 != *upload_data_size)
-  {
-    *upload_data_size = 0;
-    return MHD_YES;
-  }
+      MHD_post_process (request->pp, upload_data,*upload_data_size);
+      
+      if (*upload_data_size)
+      {
+        *upload_data_size = 0;
+        return MHD_YES;
+      }
+      
       /* done with POST data, serve response */
       MHD_destroy_post_processor (request->pp);
+      session->msg = "Configuration data updated";
+      end_post_config();
       request->pp = NULL;
       method = MHD_HTTP_METHOD_GET; /* fake 'GET' */
       if (NULL != request->post_url)
@@ -700,7 +609,7 @@ void http_stop_daemon()
   exit_requested = 1;
 }
 
-int http_run_daemon()
+int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
 {
   struct timeval tv;
   struct timeval *tvp;
@@ -708,9 +617,14 @@ int http_run_daemon()
   fd_set ws;
   fd_set es;
   int max;
+  int res = 0;
   struct MHD_Daemon *httpd = 0;
 
   MHD_UNSIGNED_LONG_LONG mhd_timeout;
+  
+  if (httpd_running)
+    return 1;
+  
   exit_requested = 0;
   
   srandom ((unsigned int) time (NULL));
@@ -721,9 +635,15 @@ int http_run_daemon()
       MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 15,
       MHD_OPTION_NOTIFY_COMPLETED, &request_completed_callback, NULL,
       MHD_OPTION_END)))
-    return 1;
+  {  
+    res = 1;
+    goto err;
+  }
   
   LOGE("Running config daemon");
+  jni_env = env;
+  jni_cfg = cfg_obj;
+  httpd_running = 1;
   
   while (1)
   {
@@ -749,11 +669,61 @@ int http_run_daemon()
     if (!httpd)
     {
       LOGE("BUG: httpd==0");
-      return 1;
+      res = 1;
+      goto err;
     }
     
     MHD_run (httpd);
   }
   MHD_stop_daemon (httpd);
-  return 0;
+err:  
+  jni_env = 0;
+  jni_cfg = 0;
+  httpd_running = 0;
+  return res;
 }
+
+int http_daemon_running()
+{
+  return httpd_running;
+}
+
+static int init_post_config()
+{
+  Config_var *v;
+  
+  for (v = config_vars; v->name; v++)
+  {
+     utstring_new(v->post_val);    
+  }
+  
+  return 0;
+  
+}
+
+static int end_post_config()
+{
+  Config_var *v;
+  int res = 0;
+  
+  for (v = config_vars; v->name; v++)
+  {
+     const char* val = utstring_body(v->post_val);    
+     LOGE("Setting '%s' to '%s'", v->lookup_name, val);
+     
+     if ((*v->reader)(jni_env,jni_cfg,v,val))
+       res = 1;
+     
+     utstring_free(v->post_val);
+     v->post_val = 0;
+  }
+  
+  if (!res)
+  {  
+    if (!write_config(jni_env,jni_cfg,"default"))
+      res = 1;
+  }  
+  
+  return res;
+}
+

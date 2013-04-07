@@ -5,82 +5,116 @@
     android:layout_height="fill_parent"
     >
 <TextView  
-    android:id="@+id/time_tv"
+    android:id="@+id/leg_time_tv"
     android:layout_width="fill_parent" 
-    android:layout_height="wrap_content" 
+    android:layout_height="65px" 
     android:text="00:00:00.0"
     android:paddingLeft="5px"
     android:paddingRight="5px"
+    android:gravity="top"
     android:textSize="60px"
     />
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="horizontal"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    >
     
+<TableLayout 
+    android:layout_width="fill_parent"
+    android:layout_height="105px"
+    android:paddingTop="2px"
+    android:paddingBottom="2px"
+    android:shrinkColumns="*"
+    android:stretchColumns="*" >    
+  <TableRow android:layout_width="fill_parent"
+        android:layout_height="35px"
+        android:gravity="center_horizontal">
   <TextView  
-      android:id="@+id/dist_tv"
+      android:id="@+id/total_time_tv"
       android:layout_width="fill_parent" 
-      android:layout_height="wrap_content" 
-      android:text="0.000"
-      android:paddingLeft="5px"
-      android:paddingRight="0px"
+      android:layout_height="35px" 
+      android:text="00:00:00"
+      android:paddingLeft="2px"
+      android:paddingRight="2px"
       android:textSize="30px"
       />
   <TextView  
-      android:id="@+id/unit_tv"
+      android:id="@+id/split_time_tv"
       android:layout_width="fill_parent" 
-      android:layout_height="wrap_content" 
-      android:text="Mi"
+      android:layout_height="35px" 
+      android:text="00:00.0"
       android:paddingLeft="2px"
-      android:paddingRight="10px"
-      android:textSize="12px"
+      android:paddingRight="2px"
+      android:textSize="30px"
       />
-  <TextView  
+  </TableRow>      
+  <TableRow android:layout_width="fill_parent"
+        android:layout_height="35px"
+        android:gravity="center_horizontal">
+    <TextView  
+        android:id="@+id/total_dist_tv"
+        android:layout_width="fill_parent" 
+        android:layout_height="35px" 
+        android:text="0.000"
+        android:paddingLeft="5px"
+        android:paddingRight="0px"
+        android:textSize="30px"
+        />
+    <TextView  
+        android:id="@+id/leg_dist_tv"
+        android:layout_width="fill_parent" 
+        android:layout_height="35px" 
+        android:text="0.000"
+        android:paddingLeft="5px"
+        android:paddingRight="0px"
+        android:textSize="30px"
+        />
+    <TextView  
+        android:id="@+id/split_dist_tv"
+        android:layout_width="fill_parent" 
+        android:layout_height="35px" 
+        android:text="0.000"
+        android:paddingLeft="5px"
+        android:paddingRight="0px"
+        android:textSize="30px"
+        />
+  </TableRow>    
+  <TableRow android:layout_width="fill_parent"
+        android:layout_height="35px"
+        android:gravity="center_horizontal">
+    <TextView  
       android:id="@+id/pace_tv"
       android:layout_width="fill_parent" 
-      android:layout_height="wrap_content" 
+      android:layout_height="35px" 
       android:text="00:00"
       android:paddingLeft="2px"
       android:paddingRight="2px"
       android:textSize="30px"
       />
   <TextView  
-      android:id="@+id/pace_label_tv"
+      android:id="@+id/battery_tv"
       android:layout_width="fill_parent" 
-      android:layout_height="wrap_content" 
-      android:text="min/mi now"
+      android:layout_height="20px" 
+      android:text=""
       android:paddingLeft="2px"
       android:paddingRight="2px"
-      android:textSize="12px"
+      android:textSize="15px"
       />
-  </LinearLayout>  
+  </TableRow>
+</TableLayout>    
+
   <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:orientation="horizontal"
     android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
+    android:layout_height="30px"
     >
     
   <TextView  
       android:id="@+id/time_of_day_tv"
       android:layout_width="fill_parent" 
-      android:layout_height="wrap_content" 
+      android:layout_height="30px" 
       android:text=""
       android:paddingLeft="5px"
       android:paddingRight="0px"
       android:textSize="25px"
       />
   </LinearLayout>  
-  <TextView  
-      android:id="@+id/battery_tv"
-      android:layout_width="fill_parent" 
-      android:layout_height="wrap_content" 
-      android:text=""
-      android:paddingLeft="2px"
-      android:paddingRight="2px"
-      android:textSize="15px"
-      />
 
   <TextView  
       android:id="@+id/status_tv"

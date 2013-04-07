@@ -11,6 +11,7 @@ class ConfigState
     long max_dist_delay = 3000; 
     boolean gps_guess_mode = true;
     int min_running_pace = 16*60;
+    int http_port = 8000;
     public double min_cos = Math.cos(10.0 * Math.PI/180.0);
     public double min_neighbor_cos = Math.cos(5.0 * Math.PI/180.0);
     public double min_d_last_trusted = 0.08, max_d_last_trusted = 0.15,
@@ -20,6 +21,7 @@ class ConfigState
     public long gps_update_interval = 1000;
     public int expire_files_days = 7;
     public long gps_disconnect_interval = 0;
+    public long split_display_pause = 10000;
     
     public String wifi_ssid = "";
     public String wifi_key = "";
@@ -32,7 +34,7 @@ class ConfigState
     
     public native boolean run_daemon();
     public native boolean stop_daemon();
-    
+    public native boolean daemon_running();
     
     public String get_wifi_key(int... allowed_lens)
     {
