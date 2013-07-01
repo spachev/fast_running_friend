@@ -120,3 +120,63 @@ JNIEXPORT jboolean JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_s
 {
   return run_timer_split(&timer,d) == 0;
 }
+
+JNIEXPORT jstring JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_get_1review_1info
+  (JNIEnv *env, jclass cls, jstring workout)
+{
+  char* review_info;
+  Run_timer* cur_timer = &timer, tmp_timer;
+  
+  if (workout)
+  {
+    
+  }
+  
+  review = run_timer_review_info(cur_timer,REVIEW_MODE_TEXT);
+  jstring res;
+  
+  if (!review_info)
+    return 0;
+  
+  res = (*env)->NewStringUTF(env,review_info);
+  return res;
+}
+
+/*
+ * Class:     com_fastrunningblog_FastRunningFriend_RunTimer
+ * Method:    get_run_list
+ * Signature: ()[Ljava/lang/String;
+ */
+JNIEXPORT jobjectArray JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_get_1run_1list
+  (JNIEnv *env , jclass cls)
+{
+  Mem_pool pool;
+  char** rl, **rl_p;
+  jobjectArray res;
+  uint num_entries;
+  jclass str_cls = (*env)->FindClass(env,"java/lang/String");
+  
+  if (!str_cls)
+    return 0;
+  
+  if (mem_pool_init(&pool,RUN_TIMER_MEM_POOL_BLOCK))
+  {
+    return 0;
+  }  
+  
+  if (!(rl = run_timer_run_list(&timer,&pool,&num_entries)))
+    return 0;
+  
+  if (!(res = (*env)->NewObjectArray(env,num_entries,str_cls,0)))
+    goto err;
+
+  for (rl_p = rl;*rl_p;rl_p++)
+  {
+    jstring js = (*env)->NewStringUTF(env,*rl_p);
+    (*env)->SetObjectArrayElement(env,res,rl_p - rl,js);
+  }
+  
+err:  
+  mem_pool_free(&pool);
+  return res;
+}

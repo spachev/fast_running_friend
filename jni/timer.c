@@ -2,16 +2,28 @@
 #include "log.h"
 
 #include <sys/time.h>
+#include <sys/types.h>
+#include <dirent.h>
 #include <time.h>
+#include <string.h>
 #include <strings.h>
 #include <unistd.h>
 
 static int start_leg(Run_timer* t, ulonglong ts, double d);
 static int start_split(Run_timer* t, ulonglong ts, double d);
 static int open_file(Run_timer* t);
+static uint print_time(char* buf, uint buf_size, ulonglong t);
+
+typedef struct st_run_list
+{
+  char* name;
+  struct st_run_list* next;
+} RUN_LIST;
 
 int run_timer_init(Run_timer* t, const char* file_prefix)
 {
+  char* p;
+  
   bzero(t,sizeof(*t));
   
   if (mem_pool_init(&t->mem_pool,RUN_TIMER_MEM_POOL_BLOCK))
@@ -20,8 +32,40 @@ int run_timer_init(Run_timer* t, const char* file_prefix)
   if (!(t->file_prefix = strdup(file_prefix)))
     return 1;
   
+  if (!(p = strrchr(file_prefix,'/')))
+    t->dir_len = 0;
+  else
+    t->dir_len = p - file_prefix;
+  
   return 0;
 }
+
+static uint print_time(char* buf, uint buf_size, ulonglong t)
+{
+  uint ss_fract,ss,mm,hh;
+  ulonglong t_left = t;
+  ss_fract = (uint)(t_left % 1000);
+  t_left -= ss_fract;
+  ss_fract = (ss_fract / 100) + ((ss_fract % 100) > 50);
+  if (ss_fract >= 10)
+  {  
+    ss_fract -= 10;
+    t_left += 1000;
+  }  
+  ss = t_left / 1000;
+  mm = ss / 60;
+  ss = (ss % 60);
+  hh = mm / 60;
+  mm = (mm % 60);
+  
+  if (hh)
+  {
+    return snprintf(buf, buf_size, "%02d:%02d:%02d.%d", hh, mm, ss, ss_fract); 
+  }
+  
+  return snprintf(buf, buf_size, "%02d:%02d.%d", mm, ss, ss_fract); 
+}
+
 
 static int open_file(Run_timer* t)
 {
@@ -33,14 +77,15 @@ static int open_file(Run_timer* t)
   if (!t->file_prefix)
     return 1;
   
-  len = strlen(t->file_prefix);
+  if ((len = strlen(t->file_prefix)) > sizeof(fname) - 3 * TIMER_DATA_PREFIX_LEN + 3)
+    return 1;
   
   if (!(lt = localtime(&t_now)))
     return 1;
 
   memcpy(fname,t->file_prefix,len);
   
-  if (!strftime(fname + len, sizeof(fname) - len, "timer_data_%Y_%m_%d-%H_%M_%S.csv", lt))
+  if (!strftime(fname + len, sizeof(fname) - len, TIMER_DATA_PREFIX TIMER_DATA_FMT "." TIMER_DATA_EXT, lt))
     return 1;
   
   if (!(t->fp = fopen(fname,"w")))
@@ -168,6 +213,7 @@ static int start_split(Run_timer* t, ulonglong ts, double d)
   }  
   LL_APPEND(cur_leg->first_split,cur_split);
   cur_leg->cur_split = cur_split;
+  t->num_splits++;
   return 0;
 }
 
@@ -192,6 +238,7 @@ static int start_leg(Run_timer* t, ulonglong ts, double d)
     return 1;
   
   LL_APPEND(t->first_leg,t->cur_leg); 
+  t->num_legs++;
   return 0;
 }
 
@@ -214,3 +261,237 @@ ulonglong run_timer_now()
   
   return (ulonglong)t.tv_sec * 1000LL + (ulonglong)t.tv_usec/1000LL;
 }
+
+#define CHECK_BYTES if (bytes_left <= bytes_printed) \
+  { free(buf); return 0; } else { bytes_left -= bytes_printed; p += bytes_printed; }
+
+char* run_timer_review_info(Run_timer* t, Run_timer_review_mode mode)
+{
+  uint buf_size = t->num_legs * 32 + t->num_splits * 16 + 64; /* should be enough */
+  char* buf;
+  Run_leg* cur_leg;
+  Run_split* cur_split;
+  char* p;
+  int bytes_left;
+  ulonglong t_last_leg = 0, t_last_split = 0, t_tmp,t_run;
+  uint bytes_printed;
+  
+  if (!(buf = (char*)malloc(buf_size)))
+    return 0;
+  
+  p = buf;
+  bytes_left = buf_size;
+  t_run = run_timer_running_time(t);
+  
+  LL_FOREACH(t->first_leg,cur_leg)
+  {
+    bytes_printed = snprintf(p,bytes_left,"L:");
+    CHECK_BYTES;
+    t_tmp = (cur_leg->next) ? cur_leg->next->first_split->t : t_run;
+    bytes_printed = print_time(p,bytes_left,t_tmp - t_last_leg);
+    CHECK_BYTES;
+    t_last_leg = t_tmp;
+    bytes_printed = snprintf(p,bytes_left," Sp:");
+    CHECK_BYTES;
+    
+    LL_FOREACH(cur_leg->first_split,cur_split)
+    {
+      if (!cur_split->t)
+        continue;
+      
+      bytes_printed = print_time(p,bytes_left,cur_split->t - t_last_split);
+      CHECK_BYTES;
+      t_last_split = cur_split->t;
+      *p = ' ';
+      bytes_printed = 1;
+      CHECK_BYTES;
+    }
+    
+    t_tmp = (cur_leg->next) ? cur_leg->next->first_split->t : t_run;
+    bytes_printed = print_time(p,bytes_left, t_tmp - t_last_split);
+    CHECK_BYTES;
+    
+    *p = '\n';
+    bytes_printed = 1;
+    CHECK_BYTES;
+  }
+  
+  *p = 0;
+  bytes_printed = 1;
+  CHECK_BYTES;
+  
+  return buf;
+}
+
+char** run_timer_run_list(Run_timer* t, Mem_pool* pool,uint* num_entries)
+{
+  char* dir_name = (char*)mem_pool_dup(pool,t->file_prefix,t->dir_len+1);
+  struct dirent* d_ent;
+  RUN_LIST* rl_head = 0,*rl_tmp;
+  DIR* d = 0;
+  char** res = 0,**res_p;
+  
+  if (!dir_name)
+    return 0;
+  
+  dir_name[t->dir_len] = 0;
+  
+  if (!(d = opendir(dir_name)))
+  {
+    LOGE("Could not open directory %s (%d)", dir_name, errno);
+    goto err;
+  }
+  
+ *num_entries = 0;
+  
+  while ((d_ent = readdir(d)))
+  {
+    char *dot = strrchr(d_ent->d_name,'.');
+    char* name;
+    uint name_len;
+    
+    if (!dot || strcmp(dot + 1,TIMER_DATA_EXT))
+      continue;
+    
+    name_len = dot - d_ent->d_name;
+    
+    if (name_len < TIMER_DATA_PREFIX_LEN || !memcmp(d_ent->d_name,TIMER_DATA_PREFIX,TIMER_DATA_PREFIX_LEN))
+      continue;
+    
+    name = d_ent->d_name + TIMER_DATA_PREFIX_LEN;
+    name_len -= TIMER_DATA_PREFIX_LEN;
+    
+    if (!(rl_tmp = (RUN_LIST*)mem_pool_alloc(pool,sizeof(*rl_tmp) + name_len + 1)))
+    {
+      LOGE("Error allocating memory");
+      goto err;
+    }
+   
+    rl_tmp->name = (char*)(rl_tmp+1); 
+    memcpy(rl_tmp->name,name,name_len);
+    rl_tmp->name[name_len] = 0;
+    rl_tmp->next = 0;
+    LL_APPEND(rl_head,rl_tmp);
+    (*num_entries)++;
+  }
+  
+  if (!(res = (char**)mem_pool_alloc(pool,sizeof(char*) * (*num_entries+1))))
+  {
+    LOGE("Out of memory");
+    goto err;
+  }
+  
+  res_p = res;
+  
+  LOGE("Copying names");
+  LL_FOREACH(rl_head,rl_tmp)
+  {
+    *res_p++ = rl_tmp->name;
+    LOGE("Copied %s ", rl_tmp->name);
+  }
+  
+  *res_p = 0;
+  
+err:
+  if (d)
+    closedir(d);
+  
+  return res;
+}
+
+int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const char* workout)
+{
+  char fname[PATH_MAX+1];
+  char* p;
+  uint len = strlen(file_prefix);
+  uint workout_len = strlen(workout);
+  FILE* fp = 0;
+  ulonglong cur_t = 0;
+  double cur_d = 0.0, cur_pow_10 = 0.1;
+  int need_start_leg = 0;
+  enum {READ_MODE_TIME, READ_MODE_DIST, READ_MODE_DIST_F} read_mode = READ_MODE_TIME;
+  
+  if (run_timer_init(t,file_prefix) || start_leg(t,0,0.0))
+    return 1;
+  
+  if (len > sizeof(fname) - 3 * TIMER_DATA_PREFIX_LEN + 3)
+    return 1;
+  
+  memcpy(fname,file_prefix,len);
+  memcpy(fname + len, workout, workout_len);
+  p = fname + len + workout_len;
+  *p++ = '.';
+  memcpy(p,TIMER_DATA_EXT, TIMER_DATA_EXT_LEN);
+  p[TIMER_DATA_EXT_LEN] = 0;
+  
+  if (!(fp = fopen(fname,"r")))
+  {
+    LOGE("Could not open %s for reading", fname);
+    return 1;
+  }
+  
+  for (;;))
+  {
+    int c = fgetc(fp);
+    
+    if (feof(fp))
+      break;
+    
+    switch (c)
+    {
+      case '\n':
+        need_start_leg = 1;
+        break;
+      case ',':
+        switch (read_mode)
+        {
+          case READ_MODE_TIME:
+            read_mode = READ_MODE_DIST;
+            break;
+          case READ_MODE_DIST_F:
+          case READ_MODE_DIST:
+            if (need_start_leg)
+            {  
+              start_leg(t,cur_t,cur_d);
+              need_start_leg = 0;
+            }
+            else  
+              start_split(t,cur_t,cur_d);
+            cur_t = 0;
+            cur_d = 0.0;
+            cur_pow_10 = 0.1;
+            read_mode = READ_MODE_TIME;
+            break;
+        }
+        break;
+      case '.':
+        read_mode = READ_MODE_DIST_F;
+        cur_pow_10 = 0.1;
+        break;
+      default:
+        if (isdigit(c))
+        {
+          switch (read_mode)
+          {
+            case READ_MODE_TIME:
+              cur_t = cur_t * 10 + (c - '0');
+              break;
+            case READ_MODE_DIST:
+              cur_d = cur_d * 10.0 + (double)(c - '0');
+              break;
+            case READ_MODE_DIST_F:
+              cur_d += (double(c - '0') * cur_pow_10;
+              cur_pow_10 /= 10.0;
+              break;
+          }  
+        }  
+        break;
+    }
+  }
+  
+  if (fp)
+    fclose(fp);
+}
+
+
+#undef CHECK_BYTES

@@ -1,5 +1,8 @@
 package com.fastrunningblog.FastRunningFriend;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import android.app.Activity;
 import android.os.Bundle;
 
@@ -12,12 +15,16 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.widget.TextView;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 
 import android.view.ContextMenu; 
 import android.view.MenuInflater; 
+import android.view.LayoutInflater; 
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;  
+import android.view.ViewGroup;  
 import android.view.ContextMenu.ContextMenuInfo;  
 
 import android.view.KeyEvent;
@@ -156,6 +163,32 @@ class GPSCoord
   }
 };
 
+class SelectRunAdapter<T> extends ArrayAdapter<T>
+{
+   public SelectRunAdapter(Context context, int textViewResourceId, List<T> objects) {
+        super(context, textViewResourceId, objects);
+
+        //mObjects = Arrays.asList(objects);
+        //mOriginalValues = (ArrayList<T>) Arrays.asList(objects);
+  }
+  
+  public View getView(int position, View  cv, ViewGroup  parent) {
+    return cv;
+    /*
+    TextView v = (TextView)cv;
+    
+    if (v == null)
+     {
+       LayoutInflater inflater = (LayoutInflater) getContext().getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+       v = (TextView)inflater.inflate(R.layout.review, null);
+     }
+     
+     v.setText("Hello, world!");
+     return v;
+    */
+}  
+}
+
 class DistInfo
 {
   public double dist,pace_t;
@@ -166,7 +199,7 @@ class DistInfo
           SIGNAL_RESTORED,
           SIGNAL_DISABLED
   };
-  public ConfidenceLevel conf_level;
+  public ConfidenceLevel conf_level = ConfidenceLevel.SIGNAL_DISABLED;
   public String debug_msg = "";
   
   public String get_status_str()
@@ -655,12 +688,14 @@ class GPSCoordBuffer
     */
 };
 
-
 public class FastRunningFriend extends Activity implements LocationListener
 {
     LocationManager lm;
     TextView total_time_tv,total_dist_tv,pace_tv,status_tv,time_of_day_tv,battery_tv;
     TextView split_time_tv, split_dist_tv, leg_time_tv, leg_dist_tv;
+    TextView review_tv;
+    Spinner select_run;
+    ViewGroup container;
     public static final String PREFS_NAME = "FastRunningFriendPrefs";
     public static final String TAG = "FastRunningFriend";
 
@@ -678,33 +713,27 @@ public class FastRunningFriend extends Activity implements LocationListener
       START_LEG,START_GPS,STOP_GPS,
       IGNORE,MENU,PASS;}
     protected enum ButtonCode {START,SPLIT,IGNORE,BACK;};
+    enum ViewType { VIEW_MAIN, VIEW_REVIEW, VIEW_NONE};
+    ViewType view_type = ViewType.VIEW_NONE;
     
     TimerState timer_state = TimerState.INITIAL; 
     boolean gps_running = false;
     int wifi_id = -1;
     boolean wifi_on = false;
+    boolean disconnect_wifi_on_exit = true;
     boolean wifi_found = false;
     Calendar cal = Calendar.getInstance();
     protected long dist_update_ts = 0;
     
     public native void set_system_time(long t_ms);
-    MenuInflater menu_inflater = null;
+    MenuInflater menu_inflater = getMenuInflater();
     
     BroadcastReceiver battery_receiver = new BroadcastReceiver() {
-        int scale = -1;
-        int level = -1;
-        int voltage = -1;
-        int temp = -1;
         
         @Override
         public void onReceive(Context context, Intent intent) 
         {
-            if (battery_tv != null)
-            {  
-              level = intent.getIntExtra("level", -1);
-              scale = intent.getIntExtra("scale", -1);
-              battery_tv.setText(String.format("Battery %d%%", level*100/scale));
-            }  
+            update_battery_status(intent);
         }
     };
     
@@ -766,18 +795,7 @@ public class FastRunningFriend extends Activity implements LocationListener
     public void onCreate(Bundle b)
     {
         super.onCreate(b);
-
-        setContentView(R.layout.main);
-        total_dist_tv = (TextView) findViewById(R.id.total_dist_tv);
-        total_time_tv = (TextView) findViewById(R.id.total_time_tv);
-        leg_dist_tv = (TextView) findViewById(R.id.leg_dist_tv);
-        leg_time_tv = (TextView) findViewById(R.id.leg_time_tv);
-        split_dist_tv = (TextView) findViewById(R.id.split_dist_tv);
-        split_time_tv = (TextView) findViewById(R.id.split_time_tv);
-        pace_tv = (TextView) findViewById(R.id.pace_tv);
-        status_tv = (TextView) findViewById(R.id.status_tv);
-        time_of_day_tv = (TextView) findViewById(R.id.time_of_day_tv);
-        battery_tv = (TextView) findViewById(R.id.battery_tv);
+        set_main_view();
         lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         
         getWindow().addFlags(
@@ -802,8 +820,6 @@ public class FastRunningFriend extends Activity implements LocationListener
           cfg.write_config("test");
         }
         
-        init_menu();
-        
         try
         {
           wifi_init();
@@ -815,6 +831,82 @@ public class FastRunningFriend extends Activity implements LocationListener
     }
     
     StringBuffer config_url_msg = new StringBuffer(128);
+    
+    void init_select_run()
+    {
+      ArrayAdapter<String> da = new ArrayAdapter<String>(this, 
+                 android.R.layout.simple_spinner_item, RunTimer.get_run_list());
+      da.setDropDownViewResource(android.R.layout.simple_spinner_item);
+      select_run.setAdapter(da);
+      select_run.setPrompt("Select Workout");
+      select_run.setSelection(1);
+    }
+    
+    void set_review_view()
+    {
+      setContentView(R.layout.review); 
+      review_tv = (TextView) findViewById(R.id.review_tv);
+      select_run = (Spinner) findViewById(R.id.select_run);
+      init_select_run();
+      view_type = ViewType.VIEW_REVIEW;
+    }
+    
+    void update_battery_status(Intent intent)
+    {
+      try
+      {
+        if (intent == null)
+        {
+          intent = getApplicationContext().registerReceiver(null,
+                                                            new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        }
+        
+        if (battery_tv != null)
+        {  
+          int level = intent.getIntExtra("level", -1);
+          int scale = intent.getIntExtra("scale", -1);
+          battery_tv.setText(String.format("Battery %d%%", level*100/scale));
+        }  
+      }  
+      catch (Exception e)
+      {
+        update_status("Error updating battery info");
+      }  
+        
+    }
+    
+    void set_main_view()
+    {
+      setContentView(R.layout.main);
+      total_dist_tv = (TextView) findViewById(R.id.total_dist_tv);
+      total_time_tv = (TextView) findViewById(R.id.total_time_tv);
+      leg_dist_tv = (TextView) findViewById(R.id.leg_dist_tv);
+      leg_time_tv = (TextView) findViewById(R.id.leg_time_tv);
+      split_dist_tv = (TextView) findViewById(R.id.split_dist_tv);
+      split_time_tv = (TextView) findViewById(R.id.split_time_tv);
+      pace_tv = (TextView) findViewById(R.id.pace_tv);
+      status_tv = (TextView) findViewById(R.id.status_tv);
+      time_of_day_tv = (TextView) findViewById(R.id.time_of_day_tv);
+      battery_tv = (TextView) findViewById(R.id.battery_tv);
+      container = (ViewGroup) findViewById(R.id.container);
+      registerForContextMenu(container);      
+      update_run_info(true);
+      show_dist_info(dist_info);
+      update_battery_status(null);
+      view_type = ViewType.VIEW_MAIN;
+    }
+    
+    void show_review()
+    {
+      set_review_view();
+      String review_text = RunTimer.get_review_info();
+      
+      if (review_text == null)
+        review_text = "Error fetching splits";
+      
+      if (review_tv != null)
+        review_tv.setText(review_text);
+    }
     
     void handle_dhcp_acquire()
     {
@@ -868,6 +960,18 @@ public class FastRunningFriend extends Activity implements LocationListener
           else
             wifi_connect();
           break;
+        case R.id.menu_review:
+          show_review();
+          break;
+        case R.id.menu_gps:
+          if (gps_running)
+            stop_gps();
+          else
+            start_gps();
+          break;
+        case R.id.menu_wifi_exit:
+          disconnect_wifi_on_exit = !disconnect_wifi_on_exit;
+          break;
       }
       return super.onContextItemSelected(item);
     }
@@ -904,6 +1008,8 @@ public class FastRunningFriend extends Activity implements LocationListener
     {
       MenuItem reset_item = menu.findItem(R.id.menu_reset);
       MenuItem wifi_item = menu.findItem(R.id.menu_wifi);
+      MenuItem gps_item = menu.findItem(R.id.menu_gps);
+      MenuItem wifi_exit_item = menu.findItem(R.id.menu_wifi_exit);
       
       if (reset_item != null)
       {
@@ -923,11 +1029,24 @@ public class FastRunningFriend extends Activity implements LocationListener
         wifi_item.setTitle(wifi_on ? "Turn Off WiFi" : "Turn On WiFi");
         Log.d(TAG, "Fixed wifi_item");
       }
+      
+      if (gps_item != null)
+      {
+        gps_item.setTitle(gps_running ? "Turn Off GPS" : "Turn On GPS");
+      }
+      
+      if (wifi_exit_item != null)
+      {
+        wifi_exit_item.setTitle(disconnect_wifi_on_exit ? "Disconnect Wifi on Exit" : "Keep Wifi On Exit");
+      }
     }
     
     public void show_menu()
     {
-      openContextMenu(leg_time_tv);
+      if (view_type != ViewType.VIEW_MAIN)
+        set_main_view();
+      else
+        openContextMenu(container);
     }
     
     public void update_run_info(boolean sync_split)
@@ -941,12 +1060,6 @@ public class FastRunningFriend extends Activity implements LocationListener
         post_dist(dist_info.dist - run_info.d_last_split, split_dist_tv);
       }  
       post_dist(dist_info.dist - run_info.d_last_leg, leg_dist_tv);
-    }
-    
-    public void init_menu()
-    {
-      menu_inflater = getMenuInflater();
-      registerForContextMenu(leg_time_tv);      
     }
     
     public void wifi_scan()
@@ -1374,9 +1487,9 @@ public class FastRunningFriend extends Activity implements LocationListener
             case INITIAL:
               return gps_running ? TimerAction.STOP_GPS : TimerAction.START_GPS;
             case RUNNING:
-              return TimerAction.SPLIT;  
+              return TimerAction.SPLIT;
             case PAUSED:
-              return TimerAction.START_LEG;  
+              return TimerAction.START_LEG;
           }
           break;
         
@@ -1454,7 +1567,10 @@ public class FastRunningFriend extends Activity implements LocationListener
     {
       RunTimer.reset();
       stop_gps();
-      wifi_disconnect();
+      
+      if (wifi_on && disconnect_wifi_on_exit)
+        wifi_disconnect();
+      
       stop_config_daemon();
       unregisterReceiver(battery_receiver);
       

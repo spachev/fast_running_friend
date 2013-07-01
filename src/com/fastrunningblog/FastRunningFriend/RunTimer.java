@@ -11,4 +11,6 @@ public class RunTimer
   public static native boolean start_leg(double d);
   public static native boolean split(double d);
   public static native boolean get_run_info(RunInfo i);
+  public static native String get_review_info(String workout);
+  public static native String[] get_run_list();
 };

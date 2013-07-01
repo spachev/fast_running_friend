@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/container"
     android:orientation="vertical"
     android:layout_width="fill_parent"
     android:layout_height="fill_parent"
@@ -17,9 +18,9 @@
     
 <TableLayout 
     android:layout_width="fill_parent"
-    android:layout_height="105px"
-    android:paddingTop="2px"
-    android:paddingBottom="2px"
+    android:layout_height="wrap_content"
+    android:paddingTop="0px"
+    android:paddingBottom="0px"
     android:shrinkColumns="*"
     android:stretchColumns="*" >    
   <TableRow android:layout_width="fill_parent"
