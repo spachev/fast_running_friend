@@ -18,6 +18,7 @@ static jobject* jni_cfg = 0;
 static int httpd_running = 0;
 
 static UT_string* get_config_form(const char* msg);
+static UT_string* get_review_list();
 
 static int init_post_config();
 static int end_post_config();
@@ -122,6 +123,46 @@ static struct Session *sessions;
 
 #define CONFIG_PAGE_TITLE "FastRunningFriend Configuration"
 
+typedef enum {NAV_UNDEF,NAV_CONFIG,NAV_REVIEW} Nav_ident;
+
+typedef struct 
+{
+  const char* title;
+  const char* url;
+  Nav_ident type;
+} Nav_item;
+
+Nav_item nav_arr[] = {
+  {"Configuration","config",NAV_CONFIG},
+  {"Workout Review","review",NAV_REVIEW},
+  {0,0,NAV_UNDEF}
+};
+
+static void add_nav_menu(UT_string* res, Nav_ident type);
+
+
+static void add_nav_menu(UT_string* res, Nav_ident type)
+{
+  Nav_item *n = nav_arr;
+  utstring_printf(res,"<table><tr>");
+  
+  for (; n->title; n++)
+  {
+    if (n->type != type)
+      utstring_printf(res,"<td><a href=\"/%s\">%s</a></td>", n->url, n->title);
+    else
+      utstring_printf(res,"<td>%s</td>", n->title);
+  }
+
+  utstring_printf(res,"</tr></table>");
+}
+
+static UT_string* get_review_list()
+{
+  UT_string* res = 0;
+  return res;
+}
+
 static UT_string* get_config_form(const char* msg)
 {
   UT_string* res;
@@ -132,20 +173,22 @@ static UT_string* get_config_form(const char* msg)
   utstring_new(res);
   utstring_printf(res, "<html><head><title>" CONFIG_PAGE_TITLE 
     "</title></head><body><h1>" CONFIG_PAGE_TITLE "</h1>");
- 
+
+  add_nav_menu(res, NAV_CONFIG);
+
   if (!jni_env || !jni_cfg)
   {
     utstring_printf(res, "Internal error</body></html>");
     return res;
   }
-    
+
   if (msg && *msg)
   {
     utstring_printf(res, "<p>%s</p>", msg);
   }
-  
+
   utstring_printf(res,"<form method=post><table border=1>");
-  
+
   for (cfg_var_p = config_vars; cfg_var_p->name; cfg_var_p++)
   {
     char buf[512];

@@ -12,6 +12,7 @@
 static int start_leg(Run_timer* t, ulonglong ts, double d);
 static int start_split(Run_timer* t, ulonglong ts, double d);
 static int open_file(Run_timer* t);
+static uint print_segment(char* buf, uint buf_size, ulonglong t, double d);
 static uint print_time(char* buf, uint buf_size, ulonglong t);
 
 typedef struct st_run_list
@@ -40,6 +41,17 @@ int run_timer_init(Run_timer* t, const char* file_prefix)
   return 0;
 }
 
+static uint print_segment(char* buf, uint buf_size, ulonglong t, double d)
+{
+  uint bytes_printed = print_time(buf, buf_size, t);
+
+  if (buf_size <= bytes_printed)
+    return bytes_printed;
+
+  return bytes_printed + snprintf(buf + bytes_printed, buf_size - bytes_printed, " %.3f", d);
+}
+
+
 static uint print_time(char* buf, uint buf_size, ulonglong t)
 {
   uint ss_fract,ss,mm,hh;
@@ -65,7 +77,6 @@ static uint print_time(char* buf, uint buf_size, ulonglong t)
   
   return snprintf(buf, buf_size, "%02d:%02d.%d", mm, ss, ss_fract); 
 }
-
 
 static int open_file(Run_timer* t)
 {
@@ -118,6 +129,13 @@ int run_timer_resume(Run_timer* t)
   
   t->t_delay += t_now - t->t_pause;
   t->t_pause = 0;
+  
+  if (t->fp)
+  {
+    fflush(t->fp);
+    fseek(t->fp,t->resume_fp_pos,SEEK_SET);
+    ftruncate(fileno(t->fp),t->resume_fp_pos);
+  }
   return 0;
 }
 
@@ -160,9 +178,16 @@ ulonglong run_timer_running_time(Run_timer* t)
 }
 
 
-int run_timer_pause(Run_timer* t)
+int run_timer_pause(Run_timer* t, double d)
 {
   t->t_pause = run_timer_now();
+  
+  if (!t->fp)
+    return 1;
+  
+  t->resume_fp_pos = ftell(t->fp);
+  fprintf(t->fp, "\n%llu,%g\n", run_timer_running_time(t),d);
+  fflush(t->fp);
   return 0;
 }
 
@@ -196,7 +221,8 @@ static int start_split(Run_timer* t, ulonglong ts, double d)
 {
   Run_leg* cur_leg = t->cur_leg;
   Run_split* cur_split = (Run_split*)mem_pool_alloc(&t->mem_pool,sizeof(Run_split));
-  
+  LOGE("start_split(%llu,%.3f)",ts,d);
+
   if (!cur_split)
     return 1;
   
@@ -221,7 +247,7 @@ static int start_split(Run_timer* t, ulonglong ts, double d)
 static int start_leg(Run_timer* t, ulonglong ts, double d)
 {
   Run_leg* cur_leg;
-  
+  LOGE("start_leg(%llu,%.3f)",ts,d);
   if (!(cur_leg = (Run_leg*)mem_pool_alloc(&t->mem_pool,sizeof(Run_leg))))
     return 1;
   
@@ -273,7 +299,8 @@ char* run_timer_review_info(Run_timer* t, Run_timer_review_mode mode)
   Run_split* cur_split;
   char* p;
   int bytes_left;
-  ulonglong t_last_leg = 0, t_last_split = 0, t_tmp,t_run;
+  ulonglong t_tmp;
+  double d_tmp;
   uint bytes_printed;
   
   if (!(buf = (char*)malloc(buf_size)))
@@ -281,45 +308,51 @@ char* run_timer_review_info(Run_timer* t, Run_timer_review_mode mode)
   
   p = buf;
   bytes_left = buf_size;
-  t_run = run_timer_running_time(t);
   
   LL_FOREACH(t->first_leg,cur_leg)
   {
+    LOGE("leg split in review:(%llu,%.3f)", cur_leg->first_split->t,cur_leg->first_split->d);
+    if (!cur_leg->next)
+      continue;
+
     bytes_printed = snprintf(p,bytes_left,"L:");
     CHECK_BYTES;
-    t_tmp = (cur_leg->next) ? cur_leg->next->first_split->t : t_run;
-    bytes_printed = print_time(p,bytes_left,t_tmp - t_last_leg);
+    bytes_printed = print_segment(p,bytes_left,
+                                  cur_leg->next->first_split->t - cur_leg->first_split->t,
+                                  cur_leg->next->first_split->d - cur_leg->first_split->d);
     CHECK_BYTES;
-    t_last_leg = t_tmp;
     bytes_printed = snprintf(p,bytes_left," Sp:");
     CHECK_BYTES;
-    
+
     LL_FOREACH(cur_leg->first_split,cur_split)
     {
-      if (!cur_split->t)
-        continue;
-      
-      bytes_printed = print_time(p,bytes_left,cur_split->t - t_last_split);
+      if (cur_split->next)
+      {
+        t_tmp = cur_split->next->t;
+        d_tmp = cur_split->next->d;
+      }
+      else
+      {
+        t_tmp = cur_leg->next->first_split->t;
+        d_tmp = cur_leg->next->first_split->d;
+      }
+
+      bytes_printed = print_segment(p,bytes_left,t_tmp - cur_split->t,d_tmp - cur_split->d);
       CHECK_BYTES;
-      t_last_split = cur_split->t;
       *p = ' ';
       bytes_printed = 1;
       CHECK_BYTES;
     }
-    
-    t_tmp = (cur_leg->next) ? cur_leg->next->first_split->t : t_run;
-    bytes_printed = print_time(p,bytes_left, t_tmp - t_last_split);
-    CHECK_BYTES;
-    
+
     *p = '\n';
     bytes_printed = 1;
     CHECK_BYTES;
   }
-  
+
   *p = 0;
   bytes_printed = 1;
   CHECK_BYTES;
-  
+
   return buf;
 }
 
@@ -355,7 +388,7 @@ char** run_timer_run_list(Run_timer* t, Mem_pool* pool,uint* num_entries)
     
     name_len = dot - d_ent->d_name;
     
-    if (name_len < TIMER_DATA_PREFIX_LEN || !memcmp(d_ent->d_name,TIMER_DATA_PREFIX,TIMER_DATA_PREFIX_LEN))
+    if (name_len < TIMER_DATA_PREFIX_LEN || memcmp(d_ent->d_name,TIMER_DATA_PREFIX,TIMER_DATA_PREFIX_LEN))
       continue;
     
     name = d_ent->d_name + TIMER_DATA_PREFIX_LEN;
@@ -399,48 +432,75 @@ err:
   return res;
 }
 
+#define RESET_VARS cur_t = 0; cur_d = 0.0; cur_pow_10 = 0.1;
+
 int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const char* workout)
 {
   char fname[PATH_MAX+1];
   char* p;
   uint len = strlen(file_prefix);
   uint workout_len = strlen(workout);
-  FILE* fp = 0;
+  FILE* fp = 0, *save_fp = 0;
   ulonglong cur_t = 0;
   double cur_d = 0.0, cur_pow_10 = 0.1;
-  int need_start_leg = 0;
+  int need_start_leg = 1, line_not_empty = 0;
   enum {READ_MODE_TIME, READ_MODE_DIST, READ_MODE_DIST_F} read_mode = READ_MODE_TIME;
   
-  if (run_timer_init(t,file_prefix) || start_leg(t,0,0.0))
+  if (run_timer_init(t,file_prefix))
     return 1;
   
   if (len > sizeof(fname) - 3 * TIMER_DATA_PREFIX_LEN + 3)
     return 1;
   
   memcpy(fname,file_prefix,len);
-  memcpy(fname + len, workout, workout_len);
-  p = fname + len + workout_len;
+  memcpy(fname + len, TIMER_DATA_PREFIX, TIMER_DATA_PREFIX_LEN);
+  memcpy(fname + len + TIMER_DATA_PREFIX_LEN, workout, workout_len);
+  p = fname + len + workout_len + TIMER_DATA_PREFIX_LEN;
   *p++ = '.';
   memcpy(p,TIMER_DATA_EXT, TIMER_DATA_EXT_LEN);
   p[TIMER_DATA_EXT_LEN] = 0;
-  
+  save_fp = t->fp;
+  t->fp = 0;
+
   if (!(fp = fopen(fname,"r")))
   {
     LOGE("Could not open %s for reading", fname);
     return 1;
   }
-  
-  for (;;))
+
+  for (;;)
   {
     int c = fgetc(fp);
-    
+
     if (feof(fp))
+    {
+      if (need_start_leg && line_not_empty)
+      {
+        start_leg(t,cur_t,cur_d);
+        need_start_leg = 0;
+      }
+      else if (line_not_empty)
+        start_split(t,cur_t,cur_d);
+
+      RESET_VARS
       break;
-    
+    }
+
     switch (c)
     {
       case '\n':
+        if (!line_not_empty)
+          break;
+
+        if (need_start_leg)
+          start_leg(t,cur_t,cur_d);
+        else
+          start_split(t,cur_t,cur_d);
+
+        RESET_VARS
+        read_mode = READ_MODE_TIME;
         need_start_leg = 1;
+        line_not_empty = 0;
         break;
       case ',':
         switch (read_mode)
@@ -450,16 +510,16 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
             break;
           case READ_MODE_DIST_F:
           case READ_MODE_DIST:
+
             if (need_start_leg)
-            {  
+            {
               start_leg(t,cur_t,cur_d);
               need_start_leg = 0;
             }
-            else  
+            else
               start_split(t,cur_t,cur_d);
-            cur_t = 0;
-            cur_d = 0.0;
-            cur_pow_10 = 0.1;
+
+            RESET_VARS
             read_mode = READ_MODE_TIME;
             break;
         }
@@ -471,6 +531,8 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
       default:
         if (isdigit(c))
         {
+          line_not_empty = 1;
+
           switch (read_mode)
           {
             case READ_MODE_TIME:
@@ -480,17 +542,20 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
               cur_d = cur_d * 10.0 + (double)(c - '0');
               break;
             case READ_MODE_DIST_F:
-              cur_d += (double(c - '0') * cur_pow_10;
+              cur_d += (double)(c - '0') * cur_pow_10;
               cur_pow_10 /= 10.0;
               break;
-          }  
-        }  
+          }
+        }
         break;
     }
   }
-  
+
   if (fp)
     fclose(fp);
+  
+  t->fp = save_fp;
+  return 0;
 }
 
 

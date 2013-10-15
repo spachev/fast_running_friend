@@ -1,6 +1,7 @@
 #include "timer.h"
 #include <jni.h>
 #include "timer_jni.h"
+#include "log.h"
 
 static Run_timer timer;
 
@@ -72,9 +73,9 @@ JNIEXPORT jboolean JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_g
  * Signature: ()Z
  */
 JNIEXPORT jboolean JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_pause
-  (JNIEnv *env, jclass cls)
+  (JNIEnv *env, jclass cls,jdouble d)
 {
-  return run_timer_pause(&timer) == 0;
+  return run_timer_pause(&timer,d) == 0;
 }
 
 /*
@@ -122,22 +123,48 @@ JNIEXPORT jboolean JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_s
 }
 
 JNIEXPORT jstring JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_get_1review_1info
-  (JNIEnv *env, jclass cls, jstring workout)
+  (JNIEnv *env, jclass cls, jstring file_prefix, jstring workout)
 {
   char* review_info;
   Run_timer* cur_timer = &timer, tmp_timer;
-  
+  jstring res;
+
   if (workout)
   {
-    
+    const char* workout_str;
+    const char* file_prefix_str; ;
+    int error = 0;
+
+    if (!(workout_str = (*env)->GetStringUTFChars(env,workout,NULL)))
+      return 0;
+
+    if (!(file_prefix_str= (*env)->GetStringUTFChars(env,file_prefix,NULL)))
+    {
+      (*env)->ReleaseStringUTFChars(env,workout,NULL);
+      return 0;
+    }
+
+    if (run_timer_init_from_workout(&tmp_timer, file_prefix_str, workout_str))
+    {
+      error = 1;
+      LOGE("Error in run_timer_init_from_workout()");
+      goto err;
+    }
+    (*env)->ReleaseStringUTFChars(env,workout,NULL);
+err:
+    if (error)
+      return 0;
+
+    cur_timer = &tmp_timer;
   }
-  
-  review = run_timer_review_info(cur_timer,REVIEW_MODE_TEXT);
-  jstring res;
-  
+
+  review_info = run_timer_review_info(cur_timer,REVIEW_MODE_TEXT);
+
   if (!review_info)
+  {
+    LOGE("Error in run_timer_review_info()");
     return 0;
-  
+  }
   res = (*env)->NewStringUTF(env,review_info);
   return res;
 }

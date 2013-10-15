@@ -2,6 +2,7 @@ package com.fastrunningblog.FastRunningFriend;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Comparator;
 
 import android.app.Activity;
 import android.os.Bundle;
@@ -17,6 +18,9 @@ import android.location.LocationManager;
 import android.widget.TextView;
 import android.widget.Spinner;
 import android.widget.ArrayAdapter;
+
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemSelectedListener;
 
 import android.view.ContextMenu; 
 import android.view.MenuInflater; 
@@ -688,6 +692,26 @@ class GPSCoordBuffer
     */
 };
 
+class SelectRunListener implements OnItemSelectedListener
+{
+  public FastRunningFriend f = null;
+  
+  public SelectRunListener(FastRunningFriend f)
+  {
+    this.f = f;
+  }
+  
+  public void onItemSelected(AdapterView<?> parent, View view, int pos,long id)
+  {
+    f.handle_select_run(parent.getItemAtPosition(pos).toString());
+  }
+  
+  @Override
+  public void onNothingSelected(AdapterView<?> arg0) 
+  {
+  }
+}
+
 public class FastRunningFriend extends Activity implements LocationListener
 {
     LocationManager lm;
@@ -836,10 +860,17 @@ public class FastRunningFriend extends Activity implements LocationListener
     {
       ArrayAdapter<String> da = new ArrayAdapter<String>(this, 
                  android.R.layout.simple_spinner_item, RunTimer.get_run_list());
+      da.sort(new Comparator<String>() 
+        {
+          public int compare(String s1, String s2)
+          {
+            return s2.compareTo(s1);
+          }
+        });
       da.setDropDownViewResource(android.R.layout.simple_spinner_item);
       select_run.setAdapter(da);
       select_run.setPrompt("Select Workout");
-      select_run.setSelection(1);
+      select_run.setOnItemSelectedListener(new SelectRunListener(this));
     }
     
     void set_review_view()
@@ -899,7 +930,7 @@ public class FastRunningFriend extends Activity implements LocationListener
     void show_review()
     {
       set_review_view();
-      String review_text = RunTimer.get_review_info();
+      String review_text = RunTimer.get_review_info(cfg.data_dir + "/",null);
       
       if (review_text == null)
         review_text = "Error fetching splits";
@@ -1547,7 +1578,8 @@ public class FastRunningFriend extends Activity implements LocationListener
 
     protected void pause_timer()
     {
-      RunTimer.pause();
+      coord_buf.sync_dist_info(dist_info,RunTimer.now(),false);
+      RunTimer.pause(dist_info.dist);
       cfg.save_time();
       cfg.pause_time = get_start_time();
       timer_state = TimerState.PAUSED;
@@ -1738,4 +1770,16 @@ public class FastRunningFriend extends Activity implements LocationListener
        timer_h.postDelayed(update_time_task,100);
     }
     
+    public void handle_select_run(String workout)
+    {
+      String review_text = RunTimer.get_review_info(cfg.data_dir + "/", workout);
+
+      if (review_tv != null)
+      {
+        if (review_text == null)
+          review_text = "Error retrieving workout info";
+
+        review_tv.setText(review_text);
+      }
+    }
 }

@@ -39,6 +39,7 @@ typedef struct st_run_timer
   const char* file_prefix;
   uint dir_len;
   FILE* fp;
+  long resume_fp_pos;
   uint num_splits;
   uint num_legs;
 } Run_timer;
@@ -49,7 +50,7 @@ typedef enum {REVIEW_MODE_HTML,REVIEW_MODE_TEXT} Run_timer_review_mode;
 
 int run_timer_init(Run_timer* t, const char* file_prefix);
 int run_timer_start(Run_timer* t);
-int run_timer_pause(Run_timer* t);
+int run_timer_pause(Run_timer* t, double d);
 int run_timer_resume(Run_timer* t);
 int run_timer_reset(Run_timer* t);
 int run_timer_start_leg(Run_timer* t, double d);
