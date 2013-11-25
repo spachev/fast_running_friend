@@ -2,6 +2,7 @@
 #define TIMER_H
 
 #include "utlist.h"
+#include "utstring.h"
 #include "mem_pool.h"
 #include <stdio.h>
 #include <sys/types.h>
@@ -10,8 +11,8 @@ typedef unsigned long long ulonglong;
 
 typedef struct st_run_split
 {
-  ulonglong t;
-  double d;
+  ulonglong t,d_t;
+  double d,d_d;
   struct st_run_split *next;
 } Run_split;
 
@@ -20,6 +21,8 @@ typedef struct st_run_leg
   Run_split* first_split;
   Run_split* cur_split;
   struct st_run_leg *next;
+  Run_split** split_arr;
+  uint num_splits;
 } Run_leg;
 
 #define RUN_TIMER_MEM_POOL_BLOCK 8192
@@ -42,6 +45,7 @@ typedef struct st_run_timer
   long resume_fp_pos;
   uint num_splits;
   uint num_legs;
+  Run_leg** leg_arr;
 } Run_timer;
 
 extern Run_timer run_timer;
@@ -55,9 +59,14 @@ int run_timer_resume(Run_timer* t);
 int run_timer_reset(Run_timer* t);
 int run_timer_start_leg(Run_timer* t, double d);
 int run_timer_split(Run_timer* t, double d);
-int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const char* workout);
+int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const char* workout, int init_fp);
 char* run_timer_review_info(Run_timer* t, Run_timer_review_mode mode);
 char** run_timer_run_list(Run_timer* t, Mem_pool* pool,uint* num_entries);
+void run_timer_print_time(UT_string* res, ulonglong t);
+int run_timer_init_split_arr(Run_timer* t);
+Run_split* run_timer_get_split(Run_timer* t, int leg_num, int split_num);
+ulonglong run_timer_parse_time(const char* s, uint len);
+void run_timer_deinit(Run_timer* t);
 
 typedef struct
 {

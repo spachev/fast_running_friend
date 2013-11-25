@@ -144,7 +144,7 @@ JNIEXPORT jstring JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_ge
       return 0;
     }
 
-    if (run_timer_init_from_workout(&tmp_timer, file_prefix_str, workout_str))
+    if (run_timer_init_from_workout(&tmp_timer, file_prefix_str, workout_str,0))
     {
       error = 1;
       LOGE("Error in run_timer_init_from_workout()");
@@ -159,6 +159,9 @@ err:
   }
 
   review_info = run_timer_review_info(cur_timer,REVIEW_MODE_TEXT);
+
+  if (cur_timer == &tmp_timer)
+    run_timer_deinit(&tmp_timer);
 
   if (!review_info)
   {

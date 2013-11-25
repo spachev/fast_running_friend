@@ -51,6 +51,12 @@ static uint print_segment(char* buf, uint buf_size, ulonglong t, double d)
   return bytes_printed + snprintf(buf + bytes_printed, buf_size - bytes_printed, " %.3f", d);
 }
 
+void run_timer_print_time(UT_string* res, ulonglong t)
+{
+  char buf[64];
+  uint len = print_time(buf,sizeof(buf),t);
+  utstring_bincpy(res,buf,len);
+}
 
 static uint print_time(char* buf, uint buf_size, ulonglong t)
 {
@@ -191,25 +197,33 @@ int run_timer_pause(Run_timer* t, double d)
   return 0;
 }
 
+void run_timer_deinit(Run_timer* t)
+{
+  if (t->fp)
+  {
+    fclose(t->fp);
+    t->fp = 0;
+  }
+
+  mem_pool_free(&t->mem_pool);
+}
+
 int run_timer_reset(Run_timer* t)
 {
   int res;
   const char* tmp = 0;
-  
+
   if (t->fp)
-  {
     fputc('\n', t->fp);
-    fclose(t->fp);
-    t->fp = 0;
-  }
-  mem_pool_free(&t->mem_pool);
-  
+
+  run_timer_deinit(t);
+
   if (!t->file_prefix)
     return 1;
-  
+
   if (!(tmp = strdup(t->file_prefix)))
     return 1;
-  
+
   free((void*)t->file_prefix);
   t->file_prefix = 0;
   res = run_timer_init(t, tmp);
@@ -225,21 +239,25 @@ static int start_split(Run_timer* t, ulonglong ts, double d)
 
   if (!cur_split)
     return 1;
-  
+
   cur_split->t = ts;
   cur_split->d = d;
-  
+  // those are initialized and used later in processing POST
+  cur_split->d_d = 0.0;
+  cur_split->d_t = 0;
+
   if (t->fp)
-  {  
+  {
     if (cur_leg->first_split)
       fputc(',',t->fp);
-    
+
     fprintf(t->fp,"%llu,%g", ts, d);
     fflush(t->fp);
-  }  
+  }
   LL_APPEND(cur_leg->first_split,cur_split);
   cur_leg->cur_split = cur_split;
   t->num_splits++;
+  cur_leg->num_splits++;
   return 0;
 }
 
@@ -253,7 +271,8 @@ static int start_leg(Run_timer* t, ulonglong ts, double d)
   
   cur_leg->cur_split = cur_leg->first_split = 0;
   t->cur_leg = cur_leg;
-  
+  cur_leg->num_splits = 0;
+
   if (t->fp)
   {
     if (t->first_leg)
@@ -434,7 +453,7 @@ err:
 
 #define RESET_VARS cur_t = 0; cur_d = 0.0; cur_pow_10 = 0.1;
 
-int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const char* workout)
+int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const char* workout, int init_fp)
 {
   char fname[PATH_MAX+1];
   char* p;
@@ -462,7 +481,7 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
   save_fp = t->fp;
   t->fp = 0;
 
-  if (!(fp = fopen(fname,"r")))
+  if (!(fp = fopen(fname,"r+")))
   {
     LOGE("Could not open %s for reading", fname);
     return 1;
@@ -551,12 +570,122 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
     }
   }
 
-  if (fp)
-    fclose(fp);
-  
-  t->fp = save_fp;
+  if (init_fp)
+  {
+    t->fp = fp;
+  }
+  else
+  {
+    if (fp)
+      fclose(fp);
+
+    t->fp = save_fp;
+  }
   return 0;
 }
 
-
 #undef CHECK_BYTES
+
+int run_timer_init_split_arr(Run_timer* t)
+{
+  Run_leg* cur_leg,**leg_p,**leg_end;
+
+  if (!t->num_legs)
+  {
+    LOGE("Empty timer");
+    return 1;
+  }
+  
+  if (!(t->leg_arr = (Run_leg**)mem_pool_alloc(&t->mem_pool,sizeof(Run_leg*)*t->num_legs)))
+  {
+    LOGE("No memory for leg array");
+    return 1;
+  }
+
+  bzero(t->leg_arr,sizeof(Run_leg*)*t->num_legs);
+  leg_end = (leg_p = t->leg_arr) + t->num_legs;
+
+  LL_FOREACH(t->first_leg,cur_leg)
+  {
+    Run_split** split_p, *cur_split, **split_end;
+
+    if (leg_p >= leg_end)
+      break;
+
+    *leg_p++ = cur_leg;
+
+    if (!(cur_leg->split_arr = (Run_split**)mem_pool_alloc(&t->mem_pool,cur_leg->num_splits*sizeof(Run_split*))))
+    {
+      LOGE("No memory for split array");
+      return 1;
+    }
+
+    bzero(cur_leg->split_arr,cur_leg->num_splits*sizeof(Run_split*));
+    split_end = (split_p = cur_leg->split_arr) + cur_leg->num_splits;
+
+    LL_FOREACH(cur_leg->first_split,cur_split)
+    {
+      if (split_p >= split_end)
+        break;
+
+      *split_p++ = cur_split;
+    }
+  }
+
+  return 0;
+}
+
+Run_split* run_timer_get_split(Run_timer* t, int leg_num, int split_num)
+{
+  Run_leg* l;
+  Run_split* sp;
+
+  if (leg_num > t->num_legs || !(l = t->leg_arr[leg_num-1]))
+    return 0;
+
+  if (split_num > l->num_splits || !(sp = l->split_arr[split_num-1]))
+    return 0;
+
+  return sp;
+}
+
+ulonglong run_timer_parse_time(const char* s, uint len)
+{
+  const char*p = s, *p_end = s + len;
+  ulonglong res = 0,res_tmp=0;
+  int  seen_dot = 0;
+  uint ms_mul = 1000;
+
+  for (;p < p_end;p++)
+  {
+    if (isdigit(*p))
+    {
+      res_tmp = res_tmp * 10 + (*p - '0');
+
+      if (seen_dot && ms_mul >= 10)
+        ms_mul /= 10;
+
+      continue;
+    }
+
+    switch(*p)
+    {
+      case ':':
+        res = res * 60 + res_tmp;
+        res_tmp = 0;
+        break;
+      case '.':
+        seen_dot = 1;
+        res = (res * 60 + res_tmp)*1000;
+        res_tmp = 0;
+        break;
+    }
+  }
+  
+  if (seen_dot)
+  {
+    res += res_tmp * ms_mul;
+  }
+
+  return res;
+}

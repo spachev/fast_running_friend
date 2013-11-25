@@ -1,0 +1,19 @@
+#! /usr/bin/perl
+
+use File::Basename;
+
+my $f;
+
+foreach $f (@ARGV)
+{
+  my $bf = basename $f;
+  open FH,"<$f" or die "Could not open $f for reading: $!\n";
+  my $file = do { local $/; <FH>};
+  $file =~ s/\n/\\n/g;
+  $file =~ s/\"/\\"/g;
+  $file =~ s/%/%%/g;
+  $bf =~ s/[\.\-]/_/g;
+  $bf = uc $bf;
+  print "#define ${bf}_Q_F \"$file\"\n";
+  close FH;
+}

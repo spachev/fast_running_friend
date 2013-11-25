@@ -27,9 +27,13 @@ include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE    := fast_running_friend 
-LOCAL_SRC_FILES := fast_running_friend.c http_daemon.c timer.c timer_jni.c mem_pool.c
-LOCAL_C_INCLUDES := $(LOCAL_PATH)/libmicrohttpd
+LOCAL_SRC_FILES := fast_running_friend.c http_daemon.c timer.c timer_jni.c mem_pool.c 
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/libmicrohttpd 
 LOCAL_STATIC_LIBRARIES := microhttpd
 LOCAL_LDLIBS    := -lm -llog 
 
+ 
 include $(BUILD_SHARED_LIBRARY)
+
+
+  
