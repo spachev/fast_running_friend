@@ -14,9 +14,13 @@ struct st_config_var
   const char* lookup_name;
   const char* java_type;
   Config_var_printer printer;
-  Config_var_reader reader;  
+  Config_var_reader reader;
+
+  // these fields are initialized in init_config_vars()
   jfieldID var_id;
   UT_string* post_val;
+  uint name_len,lookup_name_len;
+  int is_pw;
   UT_hash_handle hh;
 } ;
 

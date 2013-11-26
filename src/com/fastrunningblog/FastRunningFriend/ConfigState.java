@@ -26,6 +26,8 @@ class ConfigState
     public String wifi_ssid = "";
     public String wifi_key = "";
     public String kill_bad_guys = "";
+    public String frb_login = "";
+    public String frb_pw = "";
     
     String data_dir = "/mnt/sdcard/FastRunningFriend";
     

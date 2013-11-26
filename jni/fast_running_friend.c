@@ -103,6 +103,8 @@ Config_var config_vars[] =
   {"min_neighbor_cos", "max_neighbor_angle", "D", print_config_angle, read_config_angle},
   {"wifi_ssid", 0, "Ljava/lang/String;", print_config_str, read_config_str},
   {"wifi_key", 0, "Ljava/lang/String;", print_config_str, read_config_str},
+  {"frb_login", 0, "Ljava/lang/String;", print_config_str, read_config_str},
+  {"frb_pw", 0, "Ljava/lang/String;", print_config_str, read_config_str},
   {"gps_disconnect_interval", 0, "J", print_config_long, read_config_long},
   {"kill_bad_guys", 0, "Ljava/lang/String;", print_config_str, read_config_str},
   {0,0,0}
@@ -198,8 +200,16 @@ static int init_config_vars(JNIEnv *env)
   {
     if (!v->lookup_name)
       v->lookup_name = v->name;
-    
-    
+
+    v->name_len = strlen(v->name);
+    v->lookup_name_len = strlen(v->lookup_name);
+    v->is_pw = 0;
+
+    if (v->lookup_name_len > 3 && !memcmp(v->lookup_name + v->lookup_name_len - 3,"_pw",3))
+    {
+      v->is_pw = 1;
+    }
+
     if (!(v->var_id = (*env)->GetFieldID(env,cfg_class,v->name,v->java_type)))
     {
       LOGE("Cannot find ConfigState.%s member", v->name);

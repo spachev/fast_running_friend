@@ -77,6 +77,7 @@ static UT_string* get_config_form(const char* msg, const char* url);
 static UT_string* get_review_list(const char* msg, const char* url);
 static UT_string* get_workout_review(const char* msg, const char* url);
 
+static void print_html_escaped(UT_string* res, const char* s);
 
 static int
 post_iterator_config(void *cls,
@@ -372,6 +373,34 @@ err:
   return res;
 }
 
+static void print_html_escaped(UT_string* res, const char* s)
+{
+  for (;*s;s++)
+  {
+    switch (*s)
+    {
+      case '<':
+        utstring_bincpy(res,"&lt;",4);
+        break;
+      case '>':
+        utstring_bincpy(res,"&gt;",4);
+        break;
+      case '"':
+        utstring_bincpy(res,"&quot;",6);
+        break;
+      case '\'':
+        utstring_bincpy(res,"&apos;",6);
+        break;
+      case '&':
+        utstring_bincpy(res,"&amp;",5);
+        break;
+      default:
+        utstring_bincpy(res,s,1);
+        break;
+    }
+  }
+}
+
 static UT_string* get_config_form(const char* msg, const char* url)
 {
   UT_string* res;
@@ -401,14 +430,18 @@ static UT_string* get_config_form(const char* msg, const char* url)
   for (cfg_var_p = config_vars; cfg_var_p->name; cfg_var_p++)
   {
     char buf[512];
+    const char* input_type = cfg_var_p->is_pw ? "password":"text";
+
     if ((*cfg_var_p->printer)(jni_env,jni_cfg,cfg_var_p,buf,sizeof(buf)))
       goto err;
-    //TODO: html escape of buf
+
     utstring_printf(res,"<tr><td>%s</td><td>"
-       "<input name=\"%s\"type=text size=40 value=\"%s\">\n",
-       cfg_var_p->lookup_name,cfg_var_p->lookup_name,buf);
+       "<input name=\"%s\"type='%s' size=40 value=\"",
+       cfg_var_p->lookup_name,cfg_var_p->lookup_name,input_type);
+   print_html_escaped(res,buf);
+   utstring_printf(res,"\"></td></tr>\n");
   }
-  
+
   utstring_printf(res,"<tr><td colspan=2 align=center>"
     "<input type=submit name=submit value='Update Configuration'> </td></tr></table>\n" 
     "</form>\n</body></html>\n");
