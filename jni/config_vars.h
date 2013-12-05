@@ -1,6 +1,11 @@
 #ifndef CONFIG_VARS_H
 #define CONFIG_VARS_H
 
+#include <stdlib.h>
+#include "utstring.h"
+#include "uthash.h"
+#include <jni.h>
+
 struct st_config_var;
 typedef struct st_config_var Config_var;
 
@@ -26,6 +31,11 @@ struct st_config_var
 
 extern Config_var config_vars[];
 extern Config_var* config_h;
+extern JNIEnv* jni_env;
+extern jobject* jni_cfg;
+
 jboolean write_config(JNIEnv* env, jobject this_obj, const char* profile_name_s);
+int get_config_var_str(const char* var_name, char* buf, size_t buf_size);
+void cfg_jni_init(JNIEnv* env, jobject* obj);
 
 #endif

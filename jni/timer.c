@@ -401,49 +401,54 @@ char** run_timer_run_list(Run_timer* t, Mem_pool* pool,uint* num_entries)
     char *dot = strrchr(d_ent->d_name,'.');
     char* name;
     uint name_len;
-    
+
     if (!dot || strcmp(dot + 1,TIMER_DATA_EXT))
       continue;
-    
+
     name_len = dot - d_ent->d_name;
-    
+
     if (name_len < TIMER_DATA_PREFIX_LEN || memcmp(d_ent->d_name,TIMER_DATA_PREFIX,TIMER_DATA_PREFIX_LEN))
       continue;
-    
+
     name = d_ent->d_name + TIMER_DATA_PREFIX_LEN;
     name_len -= TIMER_DATA_PREFIX_LEN;
-    
+
     if (!(rl_tmp = (RUN_LIST*)mem_pool_alloc(pool,sizeof(*rl_tmp) + name_len + 1)))
     {
       LOGE("Error allocating memory");
       goto err;
     }
-   
+
     rl_tmp->name = (char*)(rl_tmp+1); 
     memcpy(rl_tmp->name,name,name_len);
     rl_tmp->name[name_len] = 0;
     rl_tmp->next = 0;
+    LOGE("rl_tmp = %p name=%p name_len = %d", rl_tmp, rl_tmp->name, name_len);
     LL_APPEND(rl_head,rl_tmp);
     (*num_entries)++;
   }
-  
+
   if (!(res = (char**)mem_pool_alloc(pool,sizeof(char*) * (*num_entries+1))))
   {
     LOGE("Out of memory");
     goto err;
   }
-  
+
   res_p = res;
-  
   LOGE("Copying names");
-  LL_FOREACH(rl_head,rl_tmp)
+
+  if (rl_head)
   {
-    *res_p++ = rl_tmp->name;
-    LOGE("Copied %s ", rl_tmp->name);
+    LL_FOREACH(rl_head,rl_tmp)
+    {
+      LOGE("rl_tmp = %p",rl_tmp);
+      *res_p++ = rl_tmp->name;
+      LOGE("Copied %s ", rl_tmp->name);
+    }
   }
-  
+
   *res_p = 0;
-  
+
 err:
   if (d)
     closedir(d);

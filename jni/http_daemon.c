@@ -14,6 +14,7 @@
 #include "http_daemon.h"
 #include "timer.h"
 #include "c_html.h"
+#include "frb.h"
 
 /**
  * State we keep for each user/session/browser.
@@ -67,8 +68,6 @@ struct Request
 
 
 static int exit_requested = 0;
-static JNIEnv* jni_env = 0;
-static jobject* jni_cfg = 0;
 static int httpd_running = 0;
 static Run_timer review_timer;
 static int review_timer_inited = 0;
@@ -199,7 +198,8 @@ static void print_workout_date(UT_string* res, const char* t)
   utstring_printf(res,"%.4s-%.2s-%.2s %.2s:%.2s:%.2s", t,t+5,t+8,t+11,t+14,t+17);
 }
 
-static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num, ulonglong t, double d)
+static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num, ulonglong t, double d,
+                                   const char* template_html, const char* comment)
 {
   if (split_num)
   {
@@ -207,8 +207,15 @@ static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num,
     " value='%.3f' onChange=\"update_leg(%d)\">"
     "</td><td>Time:</td><td><input name='t_%d_%d' onChange=\"update_leg(%d)\" value='",
                     split_num,leg_num,split_num,d,leg_num,leg_num,split_num,leg_num);
+
     run_timer_print_time(res,t);
     utstring_printf(res,"'>");
+
+    if (template_html)
+    {
+      utstring_printf(res,"</td><td>Zone</td><td><select name='z_%d_%d'>%s</select></td>",
+                      leg_num,split_num,template_html);
+    }
   }
   else
   {
@@ -244,10 +251,18 @@ static void print_workout_form(UT_string* res, Run_timer* t)
   uint leg_num = 1, split_num = 1;
   double d_tmp;
   ulonglong t_tmp;
-  
+  UT_string *ut_template_html = 0;
+  const char* template_html = 0;
+  const char* comment = "";
+
+  if ((ut_template_html = frb_template_html()))
+  {
+    template_html = utstring_body(ut_template_html);
+  }
+
   print_form_js(res);
   utstring_printf(res,"<form method='POST' id='theform'>\n<table>\n");
-  
+
   LL_FOREACH(t->first_leg,cur_leg)
   {
     if (!cur_leg->next)
@@ -255,7 +270,8 @@ static void print_workout_form(UT_string* res, Run_timer* t)
 
     print_html_run_segment(res,leg_num,0,
                                   cur_leg->next->first_split->t - cur_leg->first_split->t,
-                                  cur_leg->next->first_split->d - cur_leg->first_split->d);
+                                  cur_leg->next->first_split->d - cur_leg->first_split->d,
+                                  template_html,comment);
 
     split_num = 1;
 
@@ -272,13 +288,18 @@ static void print_workout_form(UT_string* res, Run_timer* t)
         d_tmp = cur_leg->next->first_split->d;
       }
 
-      print_html_run_segment(res,leg_num,split_num,t_tmp - cur_split->t,d_tmp - cur_split->d);
+      print_html_run_segment(res,leg_num,split_num,t_tmp - cur_split->t,d_tmp - cur_split->d,template_html,
+                             comment);
       split_num++;
     }
 
     leg_num++;
   }
+
   utstring_printf(res,"<tr><td colspan='100%%'><input type='submit' value='Update'></td></tr></table></form>\n");
+
+  if (ut_template_html)
+    utstring_free(ut_template_html);
 }
 
 
@@ -287,6 +308,7 @@ static UT_string* get_workout_review(const char* msg, const char* url)
   UT_string* res = 0;
   Run_timer w_timer;
   const char* t;
+
   utstring_new(res);
   utstring_printf(res, "<html><head><title>" WORKOUT_PAGE_TITLE 
     "</title></head><body><h1>" WORKOUT_PAGE_TITLE "</h1>");
@@ -792,10 +814,10 @@ post_iterator(void *cls,
   switch (request->post_type)
   {
     case POST_WORKOUT:
-      LOGE("post_workout");
+      //LOGE("post_workout");
       return post_iterator_workout(cls,kind,key,filename,content_type,transfer_encoding,data,off,size);
     case POST_CONFIG:
-      LOGE("post_config");
+      //LOGE("post_config");
       return post_iterator_config(cls,kind,key,filename,content_type,transfer_encoding,data,off,size);
     default:
       LOGE("post_impossible");
@@ -1085,16 +1107,15 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
       MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 15,
       MHD_OPTION_NOTIFY_COMPLETED, &request_completed_callback, NULL,
       MHD_OPTION_END)))
-  {  
+  {
     res = 1;
     goto err;
   }
-  
+
   LOGE("Running config daemon");
-  jni_env = env;
-  jni_cfg = cfg_obj;
+  cfg_jni_init(env,cfg_obj);
   httpd_running = 1;
-  
+
   while (1)
   {
     expire_sessions();
@@ -1122,13 +1143,12 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
       res = 1;
       goto err;
     }
-    
+
     MHD_run (httpd);
   }
   MHD_stop_daemon (httpd);
-err:  
-  jni_env = 0;
-  jni_cfg = 0;
+err:
+  cfg_jni_reset();
   httpd_running = 0;
   return res;
 }
@@ -1146,7 +1166,7 @@ static int finalize_post_workout(struct Request* r)
   ulonglong cur_t = 0;
   double cur_d = 0.0;
   long pos;
-  LOGE("In finalize_post_workout, r=%p, t->fp=%p", r, t->fp);
+  //LOGE("In finalize_post_workout, r=%p, t->fp=%p", r, t->fp);
 
   if (!t->fp)
     return 1;
@@ -1190,8 +1210,8 @@ static int finalize_post_config()
 
   for (v = config_vars; v->name; v++)
   {
-     const char* val = utstring_body(v->post_val);    
-     LOGE("Setting '%s' to '%s'", v->lookup_name, val);
+     const char* val = utstring_body(v->post_val);
+     //LOGE("Setting '%s' to '%s'", v->lookup_name, val);
 
      if ((*v->reader)(jni_env,jni_cfg,v,val))
        res = 1;
@@ -1206,6 +1226,7 @@ static int finalize_post_config()
       res = 1;
   }
 
+  frb_update_template();
   return res;
 }
 
