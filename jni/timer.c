@@ -205,6 +205,12 @@ void run_timer_deinit(Run_timer* t)
     t->fp = 0;
   }
 
+  if (t->meta_fp)
+  {
+    fclose(t->meta_fp);
+    t->meta_fp = 0;
+  }
+
   mem_pool_free(&t->mem_pool);
 }
 
@@ -242,6 +248,8 @@ static int start_split(Run_timer* t, ulonglong ts, double d)
 
   cur_split->t = ts;
   cur_split->d = d;
+  cur_split->comment = 0;
+  cur_split->zone = 0;
   // those are initialized and used later in processing POST
   cur_split->d_d = 0.0;
   cur_split->d_t = 0;
@@ -272,6 +280,7 @@ static int start_leg(Run_timer* t, ulonglong ts, double d)
   cur_leg->cur_split = cur_leg->first_split = 0;
   t->cur_leg = cur_leg;
   cur_leg->num_splits = 0;
+  cur_leg->comment = 0;
 
   if (t->fp)
   {
@@ -452,19 +461,226 @@ char** run_timer_run_list(Run_timer* t, Mem_pool* pool,uint* num_entries)
 err:
   if (d)
     closedir(d);
-  
+
   return res;
+}
+
+static int read_uint(char** s, const char* buf_end, uint* out)
+{
+  char* p = *s;
+  uint res = 0;
+
+  if (p >= buf_end)
+    return 1;
+
+  for (; p < buf_end && isdigit(*p); p++)
+  {
+    res = 10 * res + *p - '0';
+  }
+
+  if (p == buf_end)
+    return 1;
+
+  *out = res;
+  *s = p;
+  return 0;
+}
+
+static int read_str(Run_timer* t, char** s, const char* buf_end, char** out)
+{
+  char* p = *s;
+  UT_string* tmp;
+  int res = 1;
+  int in_esc = 0;
+
+  if (p >= buf_end || *p++ != '"' || p == buf_end)
+    return 1;
+
+  utstring_new(tmp);
+
+  for (;p < buf_end;p++)
+  {
+    switch (*p)
+    {
+      case '"':
+        if (in_esc)
+        {
+          utstring_bincpy(tmp,p,1);
+          in_esc = 0;
+        }
+        else
+          goto done;
+
+        break;
+
+      case '\\':
+        if (in_esc)
+        {
+          utstring_bincpy(tmp,p,1);
+          in_esc = 0;
+        }
+        else
+          in_esc = 1;
+
+        break;
+
+      case 'n':
+        if (in_esc)
+        {
+          utstring_bincpy(tmp,"\n",1);
+          in_esc = 0;
+        }
+        else
+          utstring_bincpy(tmp,p,1);
+
+        break;
+
+      default:
+        utstring_bincpy(tmp,p,1);
+        break;
+    }
+  }
+
+done:
+
+  if (p == buf_end || ++p == buf_end)
+    goto err;
+
+  *s = p;
+
+  if (!(*out = (char*)mem_pool_dup(&t->mem_pool,utstring_body(tmp),utstring_len(tmp)+1)))
+  {
+    LOGE("Out of memory parsing string");
+    return 1;
+  }
+
+  res = 0;
+
+err:
+
+  utstring_free(tmp);
+  return res;
+}
+
+static int init_meta_file(Run_timer* t, const char* fname)
+{
+  FILE* fp;
+  int file_empty = 0;
+  long file_size;
+  char* buf, *p, *buf_end;
+  Run_leg* l;
+  Run_split* sp;
+
+  LOGE("Initializing meta file %s", fname);
+
+  if (!(fp = fopen(fname,"r+")))
+  {
+    if (!(fp = fopen(fname,"w+")))
+    {
+      LOGE("Error opening meta file %s", fname);
+      return 1;
+    }
+
+    file_empty = 1;
+  }
+
+  t->meta_fp = fp;
+
+  if (file_empty)
+    return 0;
+
+  fseek(fp,0L,SEEK_END);
+
+  if ((file_size = ftell(fp)) <= 0)
+  {
+    LOGE("Nothing to read from meta file");
+    return 0;
+  }
+
+  rewind(fp);
+
+  // Read errors are not fatal, do not report error - partially read meta file is still usefull
+
+  if (!(buf = (char*)mem_pool_alloc(&t->mem_pool,file_size)))
+  {
+    LOGE("Could not allocate memory buffer to read meta file but can live with it");
+    return 0;
+  }
+
+  if (fread(buf,file_size,1,fp) != 1)
+  {
+    LOGE("Error reading from meta file, but can live with it");
+    return 0;
+  }
+
+  p = buf;
+  buf_end = buf + file_size;
+
+  if (read_str(t,&p,buf_end,&t->comment))
+  {
+    LOGE("Parse error reading workout comment");
+    return 0;
+  }
+
+  if (*p++ != '\n')
+  {
+    LOGE("No newline after workout comment");
+    return 0;
+  }
+
+  LL_FOREACH(t->first_leg,l)
+  {
+    if (read_str(t,&p,buf_end,&l->comment))
+    {
+      LOGE("Error reading leg comment");
+      return 0;
+    }
+
+    if (*p++ != '\n')
+    {
+      LOGE("No newline after leg comment");
+      return 0;
+    }
+
+    LL_FOREACH(l->first_split,sp)
+    {
+      if (read_uint(&p,buf_end,&sp->zone))
+      {
+        LOGE("Error reading split zone");
+        return 0;
+      }
+
+      if (*p++ != ',')
+      {
+        LOGE("Missing comma after split zone");
+        return 0;
+      }
+
+      if (read_str(t,&p,buf_end,&sp->comment))
+      {
+        LOGE("Error parsing split comment");
+        return 0;
+      }
+
+      if (*p++ != '\n')
+      {
+        LOGE("Missing newline after split comment");
+        return 0;
+      }
+    }
+  }
+  return 0;
 }
 
 #define RESET_VARS cur_t = 0; cur_d = 0.0; cur_pow_10 = 0.1;
 
 int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const char* workout, int init_fp)
 {
-  char fname[PATH_MAX+1];
+  char fname[PATH_MAX+1],meta_fname[PATH_MAX+1];
   char* p;
   uint len = strlen(file_prefix);
   uint workout_len = strlen(workout);
-  FILE* fp = 0, *save_fp = 0;
+  FILE* fp = 0, *save_fp = 0,*meta_fp = 0;
   ulonglong cur_t = 0;
   double cur_d = 0.0, cur_pow_10 = 0.1;
   int need_start_leg = 1, line_not_empty = 0;
@@ -483,6 +699,15 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
   *p++ = '.';
   memcpy(p,TIMER_DATA_EXT, TIMER_DATA_EXT_LEN);
   p[TIMER_DATA_EXT_LEN] = 0;
+
+  memcpy(meta_fname,file_prefix,len);
+  memcpy(meta_fname + len, META_DATA_PREFIX, META_DATA_PREFIX_LEN);
+  memcpy(meta_fname + len + META_DATA_PREFIX_LEN, workout, workout_len);
+  p = meta_fname + len + workout_len + META_DATA_PREFIX_LEN;
+  *p++ = '.';
+  memcpy(p,META_DATA_EXT, META_DATA_EXT_LEN);
+  p[META_DATA_EXT_LEN] = 0;
+
   save_fp = t->fp;
   t->fp = 0;
 
@@ -575,6 +800,12 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
     }
   }
 
+  if (init_meta_file(t,meta_fname))
+  {
+    LOGE("Error initializing from meta file");
+    return 1;
+  }
+
   if (init_fp)
   {
     t->fp = fp;
@@ -640,6 +871,17 @@ int run_timer_init_split_arr(Run_timer* t)
   return 0;
 }
 
+Run_leg* run_timer_get_leg(Run_timer* t, int leg_num)
+{
+  Run_leg* l;
+
+  if (leg_num > t->num_legs || !(l = t->leg_arr[leg_num-1]))
+    return 0;
+
+  return l;
+}
+
+
 Run_split* run_timer_get_split(Run_timer* t, int leg_num, int split_num)
 {
   Run_leg* l;
@@ -694,3 +936,190 @@ ulonglong run_timer_parse_time(const char* s, uint len)
 
   return res;
 }
+
+// at some point move it into a util module
+static void csv_print(FILE* fp, const char* s)
+{
+  fputc('"',fp);
+
+  if (s)
+    for (;*s;s++)
+    {
+      switch (*s)
+      {
+        case '"':
+        case '\\':
+          fputc('\\',fp);
+          fputc(*s,fp);
+          break;
+        case '\n':
+          fputs("\\n",fp);
+          break;
+        case '\r':
+          break;
+        default:
+          fputc(*s,fp);
+          break;
+      }
+    }
+
+  fputc('"',fp);
+}
+
+int run_timer_save(Run_timer* t)
+{
+  Run_leg* cur_leg;
+  Run_split* cur_split;
+  ulonglong cur_t = 0;
+  double cur_d = 0.0;
+  long pos;
+
+  if (!t->meta_fp)
+  {
+    LOGE("BUG: run_timer_save() called with NULL meta_fp");
+    return 1;
+  }
+
+  if (!t->fp)
+  {
+    LOGE("BUG: run_timer_save() called with NULL fp");
+    return 1;
+  }
+
+  rewind(t->fp);
+  rewind(t->meta_fp);
+  csv_print(t->meta_fp,t->comment);
+  fputc('\n',t->meta_fp);
+
+  LL_FOREACH(t->first_leg,cur_leg)
+  {
+    int line_start = 1;
+    csv_print(t->meta_fp,cur_leg->comment);
+    fputc('\n',t->meta_fp);
+
+    LL_FOREACH(cur_leg->first_split,cur_split)
+    {
+      cur_split->t = cur_t;
+      cur_split->d = cur_d;
+      cur_t += cur_split->d_t;
+      cur_d += cur_split->d_d;
+
+      if (!line_start)
+        fputc(',',t->fp);
+      else
+        line_start = 0;
+
+      fprintf(t->fp,"%llu,%g",cur_split->t,cur_split->d);
+      fprintf(t->meta_fp,"%d,",cur_split->zone);
+      csv_print(t->meta_fp,cur_split->comment);
+      fputc('\n',t->meta_fp);
+    }
+
+    fputc('\n',t->fp);
+  }
+
+  fflush(t->fp);
+
+  if ((pos = ftell(t->fp)) < 0)
+    return 1;
+
+  ftruncate(fileno(t->fp),pos);
+  return 0;
+}
+
+int run_timer_key_init(Run_timer* t, const char* key, const char* data, uint size)
+{
+  if (*key == 't' || *key == 'd' || *key == 'z'|| *key == 'c')
+  {
+    uint leg_num = 0,split_num = 0;
+    const char*p = key + 1;
+    Run_split* sp;
+
+    if (*p++ != '_')
+      goto done;
+
+    for (;isdigit(*p);p++)
+    {
+      leg_num = leg_num*10 + (*p - '0');
+    }
+
+    if (*p++ != '_')
+      goto done;
+
+    for (;isdigit(*p);p++)
+    {
+      split_num = split_num*10 + (*p - '0');
+    }
+
+    if (split_num == 0 && *key == 'c')
+    {
+      if (leg_num == 0)
+      {
+        t->comment = (char*)mem_pool_cdup(&t->mem_pool,data,size);
+        goto done;
+      }
+      else
+      {
+        Run_leg* l = run_timer_get_leg(t,leg_num);
+
+        if (!l)
+        {
+          LOGE("Leg %d not found for comment field", leg_num);
+          goto done;
+        }
+
+        l->comment = (char*)mem_pool_cdup(&t->mem_pool,data,size);
+        goto done;
+      }
+    }
+
+    if (!(sp = run_timer_get_split(t,leg_num,split_num)))
+    {
+      LOGE("Split %d for leg %d not found", split_num,leg_num);
+      goto done;
+    }
+
+    switch (*key)
+    {
+      case 't':
+        sp->d_t = run_timer_parse_time(data,size);
+        LOGE("Parsed time %-.*s into %llu ms", size, data, sp->d_t);
+        break;
+      case 'd':
+      {
+        char buf[32];
+
+        if (size + 1 > sizeof(buf))
+          goto done;
+
+        memcpy(buf,data,size);
+        buf[size] = 0;
+        sp->d_d = atof(buf);
+        break;
+      }
+      case 'z':
+      {
+        const char* p = data, *p_end = data + size;
+        uint z = 0;
+
+        for (;p < p_end;p++)
+        {
+          z = z * 10 + *p - '0';
+        }
+
+        sp->zone = z;
+        break;
+      }
+      case 'c':
+      {
+        sp->comment = (char*)mem_pool_cdup(&t->mem_pool,data,size);
+        break;
+      }
+      default: /* impossible */
+        break;
+    }
+  }
+done:
+ return 0;
+}
+

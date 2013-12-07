@@ -113,11 +113,15 @@ retry:
   while (fgets(buf,sizeof(buf),fp))
   {
     char* p = strchr(buf,',');
+    const char* selected = "";
 
     if (!p)
       continue;
 
-    utstring_printf(res, "<option value=\"%-.*s\">%s</option>\n",p - buf, buf, p+1);
+    if (strstr(p+1,"Easy"))
+      selected = " selected";
+
+    utstring_printf(res, "<option value=\"%-.*s\"%s>%s</option>\n",p - buf, buf, selected, p+1);
   }
 
   fclose(fp);

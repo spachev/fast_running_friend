@@ -201,11 +201,14 @@ static void print_workout_date(UT_string* res, const char* t)
 static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num, ulonglong t, double d,
                                    const char* template_html, const char* comment)
 {
+  int have_comment = (comment && *comment);
+  char* comment_prompt = have_comment ? "Edit Comment" : "Add Comment";
+
   if (split_num)
   {
-    utstring_printf(res,"<tr><td>Split %d</td><td>Distance:</td><td><input name='d_%d_%d' type='text' size=7"
+    utstring_printf(res,"<tr><td>Split %d</td><td>Distance:</td><td><input name='d_%d_%d' type='text' size=6"
     " value='%.3f' onChange=\"update_leg(%d)\">"
-    "</td><td>Time:</td><td><input name='t_%d_%d' onChange=\"update_leg(%d)\" value='",
+    "</td><td>Time:</td><td><input name='t_%d_%d' size=9 onChange=\"update_leg(%d)\" value='",
                     split_num,leg_num,split_num,d,leg_num,leg_num,split_num,leg_num);
 
     run_timer_print_time(res,t);
@@ -213,8 +216,14 @@ static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num,
 
     if (template_html)
     {
-      utstring_printf(res,"</td><td>Zone</td><td><select name='z_%d_%d'>%s</select></td>",
-                      leg_num,split_num,template_html);
+      utstring_printf(res,"</td><td>Zone</td><td><select name='z_%d_%d'>%s</select></td>"
+                          "<td><span id='sc_%d_%d' class='comment' onclick='open_comment(%d,%d)'>"
+                          "%s</span><div style='display:none' id='c_%d_%d'>"
+                          "<textarea name='c_%d_%d' rows='5' cols='30'>",
+                      leg_num,split_num,template_html,
+                      leg_num, split_num, leg_num, split_num, comment_prompt, 
+                      leg_num, split_num, leg_num, split_num);
+
     }
   }
   else
@@ -222,8 +231,19 @@ static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num,
     utstring_printf(res,"<tr><td>Leg %d</td><td>Distance:</td><td><span id='d_%d'> "
     "%.3f</span></td><td>Time:</td><td><span id='t_%d'>", leg_num,leg_num,d,leg_num);
     run_timer_print_time(res,t);
-    utstring_printf(res,"</span>");
+    utstring_printf(res,"</span></td><td colspan=3>"
+                        "<span id='sc_%d_%d' class='comment' onclick='open_comment(%d,%d)'>"
+                        "%s</span><div style='display:none' id='c_%d_%d'>"
+                        "<textarea name='c_%d_%d' rows='5' cols='30'>", leg_num, split_num,
+                        leg_num, split_num, comment_prompt, leg_num, split_num, leg_num, split_num);
   }
+
+  if (have_comment)
+    print_html_escaped(res,comment);
+
+  utstring_printf(res,"</textarea><span class='comment' onclick='close_comment(%d,%d)'>"
+                      "Close</span></div>",
+                  leg_num, split_num);
 
   utstring_printf(res,"</td></tr>");
 }
@@ -244,6 +264,11 @@ static void print_form_js(UT_string* res)
   utstring_printf(res,FORM_JS_Q_F);
 }
 
+static void print_zone_js(UT_string* res, uint zone, uint leg_num, uint split_num)
+{
+  utstring_printf(res,"set_zone(%d,%d,%d);\n",leg_num,split_num,zone);
+}
+
 static void print_workout_form(UT_string* res, Run_timer* t)
 {
   Run_leg* cur_leg;
@@ -251,17 +276,32 @@ static void print_workout_form(UT_string* res, Run_timer* t)
   uint leg_num = 1, split_num = 1;
   double d_tmp;
   ulonglong t_tmp;
-  UT_string *ut_template_html = 0;
+  UT_string *ut_template_html = 0,*zone_js;
   const char* template_html = 0;
-  const char* comment = "";
+  const char* comment = t->comment;
+  const char* comment_prompt;
+  int comment_present;
+
+  utstring_new(zone_js);
 
   if ((ut_template_html = frb_template_html()))
   {
     template_html = utstring_body(ut_template_html);
   }
 
+  comment_present = (comment && *comment);
+  comment_prompt =  comment_present ? "Edit Workout Comment" : "Add Workout Comment";
   print_form_js(res);
-  utstring_printf(res,"<form method='POST' id='theform'>\n<table>\n");
+  utstring_printf(res,"<form method='POST' id='theform'>"
+   "<span id='sc_0_0' class='comment' onclick='open_comment(0,0)'>%s</span><div id='c_0_0' style='display:none'>"
+   "<textarea name='c_0_0' rows='5' cols='40'>", comment_prompt
+  );
+
+  if (comment_present)
+    print_html_escaped(res,comment);
+
+  utstring_printf(res,"</textarea><span class='comment' onclick='close_comment(0,0)'>"
+  "Close</span></div></br>\n<table>\n");
 
   LL_FOREACH(t->first_leg,cur_leg)
   {
@@ -271,12 +311,14 @@ static void print_workout_form(UT_string* res, Run_timer* t)
     print_html_run_segment(res,leg_num,0,
                                   cur_leg->next->first_split->t - cur_leg->first_split->t,
                                   cur_leg->next->first_split->d - cur_leg->first_split->d,
-                                  template_html,comment);
+                                  template_html,cur_leg->comment);
 
     split_num = 1;
 
     LL_FOREACH(cur_leg->first_split,cur_split)
     {
+      print_zone_js(zone_js,cur_split->zone,leg_num,split_num);
+
       if (cur_split->next)
       {
         t_tmp = cur_split->next->t;
@@ -289,14 +331,18 @@ static void print_workout_form(UT_string* res, Run_timer* t)
       }
 
       print_html_run_segment(res,leg_num,split_num,t_tmp - cur_split->t,d_tmp - cur_split->d,template_html,
-                             comment);
+                             cur_split->comment);
       split_num++;
     }
 
     leg_num++;
   }
 
-  utstring_printf(res,"<tr><td colspan='100%%'><input type='submit' value='Update'></td></tr></table></form>\n");
+  utstring_printf(res,"<tr><td colspan='100%%'><input type='submit' value='Update'></td></tr></table></form>"
+  "\n<script>");
+  utstring_concat(res,zone_js);
+  utstring_printf(res,"</script>");
+  utstring_free(zone_js);
 
   if (ut_template_html)
     utstring_free(ut_template_html);
@@ -320,7 +366,7 @@ static UT_string* get_workout_review(const char* msg, const char* url)
     goto err;
   }
   t++;
-  utstring_printf(res,"<h2>Workout details for");
+  utstring_printf(res,"<h2>Workout details for ");
   print_workout_date(res,t);
   utstring_printf(res,"</h2>\n");
   
@@ -740,63 +786,12 @@ post_iterator_workout(void *cls,
          const char *data, uint64_t off, size_t size)
 {
   struct Request* r = (struct Request*)cls;
-  
+
   if (!size)
     return MHD_YES;
 
   LOGE("post_interator_workout: key='%s' value='%-.*s'", key, size, data);
-
-  if (*key == 't' || *key == 'd')
-  {
-    uint leg_num = 0,split_num = 0;
-    const char*p = key + 1;
-    Run_split* sp;
-
-    if (*p++ != '_')
-      goto done;
-    
-    for (;isdigit(*p);p++)
-    {
-      leg_num = leg_num*10 + (*p - '0');
-    }
-
-    if (*p++ != '_')
-      goto done;
-
-    for (;isdigit(*p);p++)
-    {
-      split_num = split_num*10 + (*p - '0');
-    }
-
-    if (!(sp = run_timer_get_split(&r->post_timer,leg_num,split_num)))
-    {
-      LOGE("Split %d for leg %d not found", split_num,leg_num);
-      goto done;
-    }
-
-    switch (*key)
-    {
-      case 't':
-        sp->d_t = run_timer_parse_time(data,size);
-        LOGE("Parsed time %-.*s into %llu ms", size, data, sp->d_t);
-        break;
-      case 'd':
-      {
-        char buf[32];
-
-        if (size + 1 > sizeof(buf))
-          goto done;
-
-        memcpy(buf,data,size);
-        buf[size] = 0;
-        sp->d_d = atof(buf);
-        break;
-      }
-      default: /* impossible */
-        break;
-    }
-  }
-done:
+  run_timer_key_init(&r->post_timer,key,data,size);
   return MHD_YES;
 }
 
@@ -1160,47 +1155,7 @@ int http_daemon_running()
 
 static int finalize_post_workout(struct Request* r)
 {
-  Run_timer* t = &r->post_timer;
-  Run_leg* cur_leg;
-  Run_split* cur_split;
-  ulonglong cur_t = 0;
-  double cur_d = 0.0;
-  long pos;
-  //LOGE("In finalize_post_workout, r=%p, t->fp=%p", r, t->fp);
-
-  if (!t->fp)
-    return 1;
-
-  rewind(t->fp);
-
-  LL_FOREACH(t->first_leg,cur_leg)
-  {
-    int line_start = 1;
-    LL_FOREACH(cur_leg->first_split,cur_split)
-    {
-      cur_split->t = cur_t;
-      cur_split->d = cur_d;
-      cur_t += cur_split->d_t;
-      cur_d += cur_split->d_d;
-
-      if (!line_start)
-        fputc(',',t->fp);
-      else
-        line_start = 0;
-
-      fprintf(t->fp,"%llu,%g",cur_split->t,cur_split->d);
-    }
-
-    fputc('\n',t->fp);
-  }
-
-  fflush(t->fp);
-
-  if ((pos = ftell(t->fp)) < 0)
-    return 1;
-
-  ftruncate(fileno(t->fp),pos);
-  return 0;
+  return run_timer_save(&r->post_timer);
 }
 
 static int finalize_post_config()

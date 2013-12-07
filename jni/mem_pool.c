@@ -76,10 +76,22 @@ int mem_pool_free(Mem_pool* pool)
 char* mem_pool_dup(Mem_pool* pool, const char* src, uint size)
 {
   char* buf = mem_pool_alloc(pool,size);
-  
+
   if (!buf)
     return 0;
-  
+ 
   memcpy(buf,src,size);
+  return buf;
+}
+
+char* mem_pool_cdup(Mem_pool* pool, const char* src, uint size)
+{
+  char* buf = mem_pool_alloc(pool,size+1);
+
+  if (!buf)
+    return 0;
+ 
+  memcpy(buf,src,size);
+  buf[size] = 0;
   return buf;
 }

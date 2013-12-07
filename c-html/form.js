@@ -1,4 +1,69 @@
+<style>
+.comment
+{
+  text-decoration: underline;
+  color: #33c033;
+}
+.comment:hover
+{
+  color: #c04433;
+  background-color: #c0c0c0;
+}
+</style>
 <script>
+
+function set_zone(leg_num,split_num,zone)
+{
+  var el = document.getElementsByName('z_' + leg_num + '_' + split_num);
+
+  if (!el)
+    return;
+
+  var i;
+
+  for (i = 0; i < el[0].options.length; i++)
+  {
+    if (el[0].options[i].value == zone)
+    {
+      el[0].selectedIndex = i;
+      break;
+    }
+  }
+}
+
+function open_comment(leg_num,split_num)
+{
+  var el = document.getElementById('sc_' + leg_num + '_' + split_num);
+
+  if (el)
+  {
+    el.style.display = 'none';
+  }
+
+  el = document.getElementById('c_' + leg_num + '_' + split_num);
+
+  if (el)
+  {
+    el.style.display = 'inline';
+  }
+}
+function close_comment(leg_num,split_num)
+{
+  var el = document.getElementById('c_' + leg_num + '_' + split_num);
+
+  if (el)
+  {
+    el.style.display = 'none';
+  }
+
+  el = document.getElementById('sc_' + leg_num + '_' + split_num);
+
+  if (el)
+  {
+    el.style.display = 'inline';
+    el.innerHTML = (leg_num == 0 && split_num == 0) ? 'Edit Workout Comment' : 'Edit Comment';
+  }
+}
 function time_to_sec(t)
 {
   var t_arr = t.split(':');
