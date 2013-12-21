@@ -20,7 +20,7 @@ JNIEXPORT jboolean JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_i
     return 0;
   
   res = run_timer_init(&timer,file_prefix_s);
-  (*env)->ReleaseStringUTFChars(env,file_prefix,NULL);
+  (*env)->ReleaseStringUTFChars(env,file_prefix,file_prefix_s);
   return res == 0;
 }
 
@@ -140,7 +140,7 @@ JNIEXPORT jstring JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_ge
 
     if (!(file_prefix_str= (*env)->GetStringUTFChars(env,file_prefix,NULL)))
     {
-      (*env)->ReleaseStringUTFChars(env,workout,NULL);
+      (*env)->ReleaseStringUTFChars(env,workout,workout_str);
       return 0;
     }
 
@@ -150,7 +150,8 @@ JNIEXPORT jstring JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_ge
       LOGE("Error in run_timer_init_from_workout()");
       goto err;
     }
-    (*env)->ReleaseStringUTFChars(env,workout,NULL);
+    (*env)->ReleaseStringUTFChars(env,workout,workout_str);
+    (*env)->ReleaseStringUTFChars(env,file_prefix,file_prefix_str);
 err:
     if (error)
       return 0;

@@ -353,7 +353,7 @@ static int print_config_str(JNIEnv* env,void* config_obj,Config_var* var,
   }
   
   strncpy(buf,s,buf_size);
-  (*env)->ReleaseStringUTFChars(env,str_obj,NULL);
+  (*env)->ReleaseStringUTFChars(env,str_obj,s);
   (*env)->DeleteLocalRef(env,str_obj);
   return 0;
 }
@@ -564,7 +564,7 @@ static int get_config_path(JNIEnv* env, jobject* cfg_obj, char* path, int max_pa
   
 err:
   if (data_dir_s)
-    (*env)->ReleaseStringUTFChars(env,data_dir,0);
+    (*env)->ReleaseStringUTFChars(env,data_dir,data_dir_s);
   
   if (data_dir)
     (*env)->DeleteLocalRef(env,data_dir);
@@ -799,7 +799,7 @@ done:
   
 err:  
   if (dir_name)
-    (*env)->ReleaseStringUTFChars(env,dir_name_str,NULL);
+    (*env)->ReleaseStringUTFChars(env,dir_name_str,dir_name);
   return status;
 }
 

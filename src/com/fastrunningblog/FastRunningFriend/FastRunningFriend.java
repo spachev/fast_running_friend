@@ -750,7 +750,7 @@ public class FastRunningFriend extends Activity implements LocationListener
     protected long dist_update_ts = 0;
     
     public native void set_system_time(long t_ms);
-    MenuInflater menu_inflater = getMenuInflater();
+    MenuInflater menu_inflater = null;
     
     BroadcastReceiver battery_receiver = new BroadcastReceiver() {
         
@@ -821,6 +821,7 @@ public class FastRunningFriend extends Activity implements LocationListener
         super.onCreate(b);
         set_main_view();
         lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        menu_inflater = getMenuInflater();
         
         getWindow().addFlags(
           WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
