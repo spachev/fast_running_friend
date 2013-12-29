@@ -791,7 +791,13 @@ post_iterator_workout(void *cls,
     return MHD_YES;
 
   LOGE("post_interator_workout: key='%s' value='%-.*s'", key, size, data);
-  run_timer_key_init(&r->post_timer,key,data,size);
+
+  if (run_timer_add_key_to_hash(&r->post_timer,key,data,size))
+  {
+    LOGE("Error adding key to hash");
+    return MHD_NO;
+  }
+
   return MHD_YES;
 }
 
@@ -1155,7 +1161,21 @@ int http_daemon_running()
 
 static int finalize_post_workout(struct Request* r)
 {
-  return run_timer_save(&r->post_timer);
+  run_timer_parse_keys(&r->post_timer);
+
+  if (run_timer_save(&r->post_timer))
+  {
+    r->session->msg = "Error saving workout";
+    return 1;
+  }
+
+  if (frb_post_workout(&r->post_timer))
+  {
+    r->session->msg = "Error posting workout to Fast Running Blog";
+    return 1;
+  }
+
+  return 0;
 }
 
 static int finalize_post_config()

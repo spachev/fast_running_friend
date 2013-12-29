@@ -37,7 +37,7 @@ int run_timer_init(Run_timer* t, const char* file_prefix)
     t->dir_len = 0;
   else
     t->dir_len = p - file_prefix;
-  
+
   return 0;
 }
 
@@ -212,6 +212,9 @@ void run_timer_deinit(Run_timer* t)
   }
 
   mem_pool_free(&t->mem_pool);
+
+  //no need to iterate through post hash, as it is from mem_pool, so just set to to 0
+  t->post_h = 0;
 }
 
 int run_timer_reset(Run_timer* t)
@@ -234,6 +237,7 @@ int run_timer_reset(Run_timer* t)
   t->file_prefix = 0;
   res = run_timer_init(t, tmp);
   free((void*)tmp);
+  t->post_h = 0;
   return res;
 }
 
@@ -691,7 +695,14 @@ int run_timer_init_from_workout(Run_timer* t, const char* file_prefix, const cha
   
   if (len > sizeof(fname) - 3 * TIMER_DATA_PREFIX_LEN + 3)
     return 1;
-  
+
+  if (!(t->workout_ts = (char*)mem_pool_dup(&t->mem_pool,workout,workout_len+1)))
+  {
+    LOGE("OOM initializing workout");
+    return 1;
+  }
+
+  t->workout_ts_len = workout_len;
   memcpy(fname,file_prefix,len);
   memcpy(fname + len, TIMER_DATA_PREFIX, TIMER_DATA_PREFIX_LEN);
   memcpy(fname + len + TIMER_DATA_PREFIX_LEN, workout, workout_len);
@@ -1027,8 +1038,75 @@ int run_timer_save(Run_timer* t)
   return 0;
 }
 
-int run_timer_key_init(Run_timer* t, const char* key, const char* data, uint size)
+int run_timer_add_key_to_hash(Run_timer* t, const char* key, const char* data, uint size)
 {
+  Url_hash_entry* e = 0;
+  size_t key_len = strlen(key);
+
+  HASH_FIND_STR(t->post_h,key,e);
+
+  // append if the entry is present
+  if (e)
+  {
+    uint new_val_len = size + e->val_len;
+    char* new_val;
+
+    LOGE("Found entry with key '%s' for key '%s'", e->key, key);
+    
+    if (!(new_val = (char*)mem_pool_alloc(&t->mem_pool,new_val_len)))
+    {
+      LOGE("OOM allocating additional space for value");
+      return 1;
+    }
+
+    memcpy(new_val,e->val,e->val_len);
+    memcpy(new_val + e->val_len, data, size);
+    new_val[new_val_len] = 0;
+    e->val = new_val;
+    e->val_len = new_val_len;
+    return 0;
+  }
+
+  // if the entry is not present we get here
+  if (!(e = (Url_hash_entry*)mem_pool_alloc(&t->mem_pool,sizeof(*e) + key_len + size + 2)))
+  {
+    LOGE("Out of memory in add_key_to_hash()");
+    return 1;
+  }
+
+  e->key = (char*)(e + 1);
+  e->val = e->key + key_len + 1;
+  memcpy(e->key, key, key_len + 1);
+  memcpy(e->val, data, size);
+  e->val[size] = 0;
+  e->key_len = key_len;
+  e->val_len = size;
+
+  HASH_ADD_KEYPTR(hh,t->post_h,e->key,key_len,e);
+  return 0;
+}
+
+int run_timer_parse_keys(Run_timer* t)
+{
+  Url_hash_entry* he;
+
+  for (he = t->post_h; he; he = he->hh.next)
+  {
+    if (run_timer_parse_key(t,he))
+    {
+      LOGE("Error parsing key %s but we can live with it", he->key);
+    }
+  }
+
+  return 0;
+}
+
+int run_timer_parse_key(Run_timer* t, Url_hash_entry* he)
+{
+  char* key = he->key;
+  size_t size = he->val_len;
+  char* data = he->val;
+
   if (*key == 't' || *key == 'd' || *key == 'z'|| *key == 'c')
   {
     uint leg_num = 0,split_num = 0;

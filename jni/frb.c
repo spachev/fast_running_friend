@@ -9,6 +9,20 @@
 
 
 #define MAX_TEMPLATE_BUF 4096
+#define MAX_POST_RESP_BUF 1024
+
+#define INIT_FRB_AUTH   if (get_config_var_str("frb_login", frb_login, sizeof(frb_login)) || \
+get_config_var_str("frb_pw", frb_pw, sizeof(frb_pw))) \
+{\
+  LOGE("Error fetching FRB auth config info");\
+  return 1;\
+}\
+if (!*frb_login) \
+{\
+  LOGE("FRB auth not configured, not fetching template");\
+  return 1;\
+}
+
 
 int frb_update_template()
 {
@@ -19,18 +33,7 @@ int frb_update_template()
   FILE* fp;
   size_t data_size;
 
-  if (get_config_var_str("frb_login", frb_login, sizeof(frb_login)) ||
-      get_config_var_str("frb_pw", frb_pw, sizeof(frb_pw)))
-  {
-    LOGE("Error fetching FRB auth config info");
-    return 1;
-  }
-
-  if (!*frb_login)
-  {
-    LOGE("FRB auth not configured, not fetching template");
-    return 1;
-  }
+  INIT_FRB_AUTH
 
   if (!(template_buf = (char*)malloc(MAX_TEMPLATE_BUF)))
   {
@@ -125,5 +128,51 @@ retry:
   }
 
   fclose(fp);
+  return res;
+}
+
+int frb_post_workout(Run_timer* t)
+{
+  char frb_login[128],frb_pw[128];
+  char* resp_buf = 0;
+  size_t resp_size;
+  int res = 1;
+
+  INIT_FRB_AUTH
+
+  if (run_timer_add_key_to_hash(t, "username", frb_login, strlen(frb_login)) ||
+      run_timer_add_key_to_hash(t, "pass", frb_pw, strlen(frb_pw)) ||
+      run_timer_add_key_to_hash(t, "frf_mode", "1", 1) ||
+      run_timer_add_key_to_hash(t, "action", "post_workout", 12) ||
+      run_timer_add_key_to_hash(t, "workout_ts", t->workout_ts, t->workout_ts_len))
+  {
+    LOGE("Error adding Fast Running Blog login credentials to post hash");
+    return 1;
+  }
+
+  if (!(resp_buf = (char*)malloc(MAX_POST_RESP_BUF)))
+  {
+    LOGE("OOM allocating post response buffer");
+    return 1;
+  }
+
+  if (!(resp_size = url_fetch_with_hash(FRB_POST_URL,resp_buf,MAX_POST_RESP_BUF,t->post_h)))
+  {
+    LOGE("Error posting workout to Fast Running Blog");
+    goto err;
+  }
+
+  if (!strstr(resp_buf,FRB_OK) || !strstr(resp_buf,FRB_POST_OK))
+  {
+    LOGE("Error in response to post_workout on Fast Running Blog. Server response: %.*s", resp_size, resp_buf);
+    goto err;
+  }
+
+  res = 0;
+
+err:
+  if (resp_buf)
+    free(resp_buf);
+
   return res;
 }

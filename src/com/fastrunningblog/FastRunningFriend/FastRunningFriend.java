@@ -737,8 +737,10 @@ public class FastRunningFriend extends Activity implements LocationListener
       START_LEG,START_GPS,STOP_GPS,
       IGNORE,MENU,PASS;}
     protected enum ButtonCode {START,SPLIT,IGNORE,BACK;};
-    enum ViewType { VIEW_MAIN, VIEW_REVIEW, VIEW_NONE};
+    protected enum TimerMode {FINE_RES,POWER_SAVE_RES;};
+    protected enum ViewType { VIEW_MAIN, VIEW_REVIEW, VIEW_NONE};
     ViewType view_type = ViewType.VIEW_NONE;
+    TimerMode timer_mode = TimerMode.POWER_SAVE_RES;
     
     TimerState timer_state = TimerState.INITIAL; 
     boolean gps_running = false;
@@ -793,12 +795,13 @@ public class FastRunningFriend extends Activity implements LocationListener
        public void run()
        {
          final long now = time_now();
+         final long t_res = (timer_mode == TimerMode.FINE_RES) ? 100 : 1000;
          
          if (RunTimer.get_run_info(run_info))
          {  
            update_run_info(false);
          }  
-         timer_h.postAtTime(this,SystemClock.uptimeMillis()+100);
+         timer_h.postAtTime(this,SystemClock.uptimeMillis()+t_res);
          
          if (dist_update_ts == 0 || now - dist_update_ts > cfg.dist_update_interval)
          {
@@ -841,8 +844,10 @@ public class FastRunningFriend extends Activity implements LocationListener
         else
         {
           if (!cfg.read_config("default"))
+          {
             update_status("Error reading config file");
-          cfg.write_config("test");
+            cfg.write_config("default");
+          }
         }
         
         try
@@ -1083,12 +1088,14 @@ public class FastRunningFriend extends Activity implements LocationListener
     
     public void update_run_info(boolean sync_split)
     {
-      post_time(run_info.t_total,total_time_tv,PrecType.TOTAL);
-      post_time(run_info.t_leg,leg_time_tv,PrecType.LEG);
+      boolean fine_res = (sync_split || timer_mode == TimerMode.FINE_RES);
+
+      post_time(run_info.t_total,total_time_tv,fine_res ? PrecType.TOTAL_FINE : PrecType.TOTAL_PS);
+      post_time(run_info.t_leg,leg_time_tv,fine_res ? PrecType.LEG_FINE : PrecType.LEG_PS);
       
       if (sync_split || run_info.t_split == run_info.t_leg || run_info.t_split > cfg.split_display_pause)
       {  
-        post_time(run_info.t_split,split_time_tv,PrecType.SPLIT);
+        post_time(run_info.t_split,split_time_tv,fine_res ? PrecType.SPLIT_FINE : PrecType.SPLIT_PS);
         post_dist(dist_info.dist - run_info.d_last_split, split_dist_tv);
       }  
       post_dist(dist_info.dist - run_info.d_last_leg, leg_dist_tv);
@@ -1589,7 +1596,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       
       if (RunTimer.get_run_info(run_info))
       {  
-        update_run_info(false);
+        update_run_info(true);
       }  
       
       show_dist_info(dist_info);
@@ -1686,7 +1693,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       tv.setText(String.format("%.3f", total_dist));
     }
     
-    enum PrecType { TOTAL,LEG,SPLIT};
+    enum PrecType { TOTAL_FINE,TOTAL_PS,LEG_FINE,LEG_PS,SPLIT_FINE,SPLIT_PS};
     
     void post_time(long ts, TextView tv,PrecType prec_type)
     {
@@ -1700,16 +1707,24 @@ public class FastRunningFriend extends Activity implements LocationListener
          
          switch (prec_type)
          {
-           case LEG:
+           case LEG_FINE:
              t = String.format("%02d:%02d:%02d.%d",
                      hh, mm, ss, fract);
              break;
-           case TOTAL:  
+           case LEG_PS:
+             t = String.format("%02d:%02d:%02d",
+                               hh, mm, ss);
+                               break;
+           case TOTAL_FINE:
+           case TOTAL_PS:
              t = String.format("%d:%02d:%02d", hh, mm, ss);
-             break;        
-           case SPLIT:  
+             break;
+           case SPLIT_FINE:
              t = String.format("%02d:%02d.%d",  mm, ss, fract);
              break;        
+           case SPLIT_PS:
+             t = String.format("%02d:%02d",  mm, ss);
+             break;
          }
          
          if (t != null)

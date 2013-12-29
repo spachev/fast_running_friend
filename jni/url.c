@@ -122,3 +122,79 @@ err:
 
     return data.data_size;
 }
+
+size_t url_fetch_with_hash(const char* url, char* buf, size_t buf_size, Url_hash* h)
+{
+  CURL *ch;
+  CURLcode res;
+  struct Curl_data data;
+  char* content = 0;
+  UT_string* esc_post_fields = 0;
+  Url_hash_entry* cur_he;
+  
+  data.buf = buf;
+  data.buf_size = buf_size;
+  data.data_size = 0;
+  
+  if (curl_global_init(CURL_GLOBAL_ALL))
+    return 0;
+  
+  if (!(ch = curl_easy_init()))
+  {
+    curl_global_cleanup();
+    return 0;
+  }
+  
+  if (curl_easy_setopt(ch,CURLOPT_URL,url))
+    goto err;
+
+  utstring_new(esc_post_fields);
+
+  for(cur_he = h; cur_he; cur_he = cur_he->hh.next)
+  {
+    char* f;
+    utstring_bincpy(esc_post_fields,cur_he->key,cur_he->key_len);
+    utstring_bincpy(esc_post_fields,"=",1);
+
+    if (!(f = curl_easy_escape(ch,cur_he->val,cur_he->val_len)))
+    {
+      LOGE("Error in curl_easy_escape()");
+      goto err;
+    }
+
+    utstring_bincpy(esc_post_fields,f,strlen(f));
+
+    if (cur_he->hh.next)
+      utstring_bincpy(esc_post_fields,"&",1);
+
+    curl_free(f);
+  }
+
+  if (curl_easy_setopt(ch,CURLOPT_POSTFIELDS,utstring_body(esc_post_fields)))
+  {
+    goto err;
+  }
+
+  LOGE("Sending post_fields %s", utstring_body(esc_post_fields));
+
+  if (curl_easy_setopt(ch,CURLOPT_WRITEFUNCTION,process_data) ||
+    curl_easy_setopt(ch,CURLOPT_WRITEDATA,&data))
+    return 0;
+  
+  curl_easy_setopt(ch, CURLOPT_USERAGENT, "Fast Running Friend/1.0");
+  
+  if (curl_easy_perform(ch))
+    goto err;
+  
+  //LOGE("curl_easy_perform(), got %d bytes ", data.data_size);
+  
+  err:
+  
+  curl_easy_cleanup(ch);
+  curl_global_cleanup();
+  
+  if (esc_post_fields)
+    utstring_free(esc_post_fields);
+  
+  return data.data_size;
+}

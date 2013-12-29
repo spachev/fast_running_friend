@@ -3,6 +3,7 @@
 
 #include "utlist.h"
 #include "utstring.h"
+#include "url.h"
 #include "mem_pool.h"
 #include <stdio.h>
 #include <sys/types.h>
@@ -56,6 +57,9 @@ typedef struct st_run_timer
   uint num_legs;
   Run_leg** leg_arr;
   char* comment;
+  char* workout_ts;
+  uint workout_ts_len;
+  Url_hash* post_h;
 } Run_timer;
 
 extern Run_timer run_timer;
@@ -79,7 +83,8 @@ Run_leg* run_timer_get_leg(Run_timer* t, int leg_num);
 
 ulonglong run_timer_parse_time(const char* s, uint len);
 void run_timer_deinit(Run_timer* t);
-int run_timer_key_init(Run_timer* t, const char* key, const char* data, uint size);
+int run_timer_parse_key(Run_timer* t, Url_hash_entry* he);
+int run_timer_parse_keys(Run_timer* t);
 
 typedef struct
 {
@@ -92,4 +97,6 @@ int run_timer_info(Run_timer* t, Run_info* info);
 ulonglong run_timer_now(); 
 ulonglong run_timer_running_time(Run_timer* t);
 int run_timer_save(Run_timer* t);
+int run_timer_add_key_to_hash(Run_timer* t, const char* key, const char* data, uint size);
+
 #endif
