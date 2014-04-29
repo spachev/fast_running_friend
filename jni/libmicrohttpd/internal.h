@@ -29,6 +29,7 @@
 
 #include "platform.h"
 #include "microhttpd.h"
+#include "log.h"
 #if HTTPS_SUPPORT
 #include <gnutls/gnutls.h>
 #endif

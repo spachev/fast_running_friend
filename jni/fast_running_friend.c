@@ -20,6 +20,7 @@
 #include "http_daemon.h"
 #include "log.h"
 #include "timer_jni.h"
+#include "sirf_gps.h"
 
 static FILE* gps_data_fp = 0, *gps_debug_fp = 0;
 static char gps_data_dir[PATH_MAX+1];
@@ -80,8 +81,8 @@ static int read_config_double_low(JNIEnv* env, void* config_obj, Config_var* var
                                    const char* val_str, Config_var_type type);
 static int print_config_double_low(JNIEnv* env,void* config_obj,Config_var* var, char* buf, 
                                size_t buf_size, Config_var_type type);
-                                   
-static int init_config_vars(JNIEnv *env);     
+
+static int init_config_vars(JNIEnv *env);
 static int init_run_info_fields(JNIEnv* env, Run_info_fields* ri_fields);
 static int start_config_daemon();
 
@@ -141,7 +142,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved)
   
   if (init_config_vars(env))
     return -1;
-  
+
   return JNI_VERSION_1_4;
 }
 

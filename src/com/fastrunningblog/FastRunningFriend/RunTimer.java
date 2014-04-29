@@ -13,4 +13,6 @@ public class RunTimer
   public static native boolean get_run_info(RunInfo i);
   public static native String get_review_info(String file_prefix, String workout);
   public static native String[] get_run_list();
+  public static native void sirf_gps_test_start();
+  public static native void sirf_gps_test_stop();
 };

@@ -211,3 +211,15 @@ err:
   mem_pool_free(&pool);
   return res;
 }
+
+JNIEXPORT void JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_sirf_1gps_1test_1start
+(JNIEnv *env, jclass cls)
+{
+  run_timer_run_sirf_gps(&timer);
+}
+
+JNIEXPORT void JNICALL Java_com_fastrunningblog_FastRunningFriend_RunTimer_sirf_1gps_1test_1stop
+(JNIEnv *env, jclass cls)
+{
+  run_timer_stop_sirf_gps(&timer);
+}

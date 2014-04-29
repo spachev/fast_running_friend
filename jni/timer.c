@@ -8,6 +8,7 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include "sirf_gps.h"
 
 static int start_leg(Run_timer* t, ulonglong ts, double d);
 static int start_split(Run_timer* t, ulonglong ts, double d);
@@ -1199,5 +1200,18 @@ int run_timer_parse_key(Run_timer* t, Url_hash_entry* he)
   }
 done:
  return 0;
+}
+
+void run_timer_stop_sirf_gps(Run_timer* t)
+{
+  t->sirf.done = 1;
+}
+
+void run_timer_run_sirf_gps(Run_timer* t)
+{
+  if (gps_sirf_init(&t->sirf) == 0)
+    gps_sirf_loop(&t->sirf);
+
+  gps_sirf_end(&t->sirf);
 }
 

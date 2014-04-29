@@ -36,7 +36,8 @@ include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE    := fast_running_friend 
-LOCAL_SRC_FILES := fast_running_friend.c http_daemon.c timer.c timer_jni.c mem_pool.c url.c frb.c config_vars.c
+LOCAL_SRC_FILES := fast_running_friend.c http_daemon.c timer.c timer_jni.c mem_pool.c url.c frb.c config_vars.c \
+  sirf_gps.c
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/libmicrohttpd $(LOCAL_PATH)/libcurl
 LOCAL_STATIC_LIBRARIES := microhttpd libcurl
 LOCAL_LDLIBS    := -lm -llog 

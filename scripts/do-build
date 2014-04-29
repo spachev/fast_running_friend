@@ -3,6 +3,6 @@
 set -e -x
 
 scripts/mk-quoted-files c-html/form.js > jni/c_html.h
-~/android-ndk-r8b/ndk-build
+~/android-ndk-r8b/ndk-build  V=1 
 ant clean 
 ant debug

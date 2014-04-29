@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <time.h>
 #include <microhttpd.h>
+#include <internal.h>
 #include <ctype.h>
 
 #include <jni.h>
@@ -15,6 +16,8 @@
 #include "timer.h"
 #include "c_html.h"
 #include "frb.h"
+
+#define METHOD_ERROR "<html><head></head><body>Unsupported method</body>"
 
 /**
  * State we keep for each user/session/browser.
@@ -67,10 +70,12 @@ struct Request
 };
 
 
-static int exit_requested = 0;
-static int httpd_running = 0;
+static int volatile exit_requested = 0;
+static int volatile httpd_running = 0;
 static Run_timer review_timer;
 static int review_timer_inited = 0;
+// TODO: fix thread safety
+static struct MHD_Daemon *httpd = 0;
 
 static UT_string* get_config_form(const char* msg, const char* url);
 static UT_string* get_review_list(const char* msg, const char* url);
@@ -114,35 +119,6 @@ static int ensure_review_timer_inited();
 #define WORKOUT_URL "/workout"
 #define WORKOUT_URL_LEN strlen(WORKOUT_URL)
 
-/**
- * Invalid method page.
- */
-#define METHOD_ERROR "<html><head><title>Illegal request</title></head><body>Error in request.</body></html>"
-
-/**
- * Invalid URL page.
- */
-#define NOT_FOUND_ERROR "<html><head><title>Not found</title></head><body>Page not found.</body></html>"
-
-/**
- * Front page. (/)
- */
-#define MAIN_PAGE "<html><head><title>Welcome</title></head><body><form action=\"/2\" method=\"post\">What is your name? <input type=\"text\" name=\"v1\" value=\"%s\" /><input type=\"submit\" value=\"Next\" /></body></html>"
-
-/**
- * Second page. (/2)
- */
-#define SECOND_PAGE "<html><head><title>Tell me more</title></head><body><a href=\"/\">previous</a> <form action=\"/S\" method=\"post\">%s, what is your job? <input type=\"text\" name=\"v2\" value=\"%s\" /><input type=\"submit\" value=\"Next\" /></body></html>"
-
-/**
- * Second page (/S)
- */
-#define SUBMIT_PAGE "<html><head><title>Ready to submit?</title></head><body><form action=\"/F\" method=\"post\"><a href=\"/2\">previous </a> <input type=\"hidden\" name=\"DONE\" value=\"yes\" /><input type=\"submit\" value=\"Submit\" /></body></html>"
-
-/**
- * Last page.
- */
-#define LAST_PAGE "<html><head><title>Thank you</title></head><body>Thank you.</body></html>"
 
 /**
  * Name of our cookie.
@@ -175,6 +151,7 @@ Nav_item nav_arr[] = {
 
 static void add_nav_menu(UT_string* res, Nav_ident type);
 static void print_workout_form(UT_string* res, Run_timer* t);
+static void get_prev_and_next(const char* workout, const char** prev, const char** next);
 
 
 static void add_nav_menu(UT_string* res, Nav_ident type)
@@ -348,6 +325,22 @@ static void print_workout_form(UT_string* res, Run_timer* t)
     utstring_free(ut_template_html);
 }
 
+static void print_workout_nav(UT_string* res, const char* workout)
+{
+  const char* prev, *next;
+
+  get_prev_and_next(workout, &prev, &next);
+
+  utstring_printf(res, "<table><tr>");
+
+  if (prev)
+    utstring_printf(res, "<td><a href=\"%s\">Prev</a></td>", prev);
+
+  if (next)
+    utstring_printf(res, "<td><a href=\"%s\">Next</a></td>", next);
+
+  utstring_printf(res, "</div>");
+}
 
 static UT_string* get_workout_review(const char* msg, const char* url)
 {
@@ -381,11 +374,50 @@ static UT_string* get_workout_review(const char* msg, const char* url)
     goto err;
   }
 
+  print_workout_nav(res, t);
   print_workout_form(res,&w_timer);
   utstring_printf(res,"</body></html>");
   run_timer_deinit(&w_timer);
 err:
   return res;
+}
+
+static void get_prev_and_next(const char* workout, const char** prev, const char** next)
+{
+  char** rl;
+  char** p, **p_end;
+  uint num_entries;
+
+  *prev = *next = 0;
+
+  if (ensure_review_timer_inited())
+  {
+    LOGE("Error initializing review timer object");
+    return;
+  }
+
+  // TODO: do not rely on the file system sort, make sure the list is sorted
+  if (!(rl = run_timer_run_list(&review_timer,&review_timer.mem_pool,&num_entries)))
+    return;
+
+  p_end = rl + num_entries;
+
+  //LOGE("Found %d entries", num_entries);
+
+  for (p = rl; p < p_end ; p++)
+  {
+    //LOGE("Comparing %s against %s", *p, workout);
+    if (strcmp(*p, workout) == 0)
+    {
+      if (p > rl)
+        *prev = p[-1];
+
+      if (p + 1 < p_end)
+        *next = p[1];
+
+      break;
+    }
+  }
 }
 
 static UT_string* get_review_list(const char* msg, const char* url)
@@ -697,39 +729,6 @@ handle_page (const void *cls,
   utstring_free(reply_s);
   return ret;
 }
-
-
-/**
- * Handler used to generate a 404 reply.
- *
- * @param cls a 'const char *' with the HTML webpage to return
- * @param mime mime type to use
- * @param session session handle 
- * @param connection connection to use
- */
-static int
-not_found_page (const void *cls,
-    const char *mime,
-    struct Session *session,
-    struct MHD_Connection *connection)
-{
-  int ret;
-  struct MHD_Response *response;
-
-  /* unsupported HTTP method */
-  response = MHD_create_response_from_buffer (strlen (NOT_FOUND_ERROR),
-                (void *) NOT_FOUND_ERROR,
-                MHD_RESPMEM_PERSISTENT);
-  ret = MHD_queue_response (connection, 
-          MHD_HTTP_NOT_FOUND, 
-          response);
-  MHD_add_response_header (response,
-         MHD_HTTP_HEADER_CONTENT_ENCODING,
-         mime);
-  MHD_destroy_response (response);
-  return ret;
-}
-
 
 
 #define MAX_POST_VAR_SIZE 512  
@@ -1074,12 +1073,18 @@ static void expire_sessions ()
       else
         prev = pos;
       pos = next;
-    }      
+    }
 }
 
 void http_stop_daemon()
 {
   exit_requested = 1;
+
+  if (httpd)
+  {
+    httpd->shutdown = MHD_YES;
+    LOGE("requesting shutdown");
+  }
 }
 
 int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
@@ -1091,13 +1096,15 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
   fd_set es;
   int max;
   int res = 0;
-  struct MHD_Daemon *httpd = 0;
 
   MHD_UNSIGNED_LONG_LONG mhd_timeout;
   
   if (httpd_running)
+  {
+    LOGE("Will not start daemon in http_run_daemon(), httpd_running = %d", httpd_running);
     return 1;
-  
+  }
+
   exit_requested = 0;
   
   srandom ((unsigned int) time (NULL));
@@ -1105,10 +1112,11 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
                         8000,
                         NULL, NULL, 
       &create_response, NULL, 
-      MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 15,
+      MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 3,
       MHD_OPTION_NOTIFY_COMPLETED, &request_completed_callback, NULL,
       MHD_OPTION_END)))
   {
+    LOGE("Error starting config daemon");
     res = 1;
     goto err;
   }
@@ -1130,14 +1138,28 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
     {
       tv.tv_sec = mhd_timeout / 1000;
       tv.tv_usec = (mhd_timeout - (tv.tv_sec * 1000)) * 1000;
-      tvp = &tv;    
+      tvp = &tv;
     }
     else
-      tvp = NULL;
-    select (max + 1, &rs, &ws, &es, tvp);
+    {
+      /* do not go into infinite wait */
+      tv.tv_sec = 1;
+      tv.tv_usec = 0;
+      tvp = &tv;
+    }
+
+    if (select (max + 1, &rs, &ws, &es, tvp) == 0)
+    {
+      if (!exit_requested)
+        continue;
+    }
+
     if (exit_requested)
+    {
+      exit_requested = 0;
       break;
-    
+    }
+
     if (!httpd)
     {
       LOGE("BUG: httpd==0");
@@ -1145,12 +1167,19 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
       goto err;
     }
 
-    MHD_run (httpd);
+    MHD_run(httpd);
+    if (exit_requested)
+    {
+      exit_requested = 0;
+      break;
+    }
   }
-  MHD_stop_daemon (httpd);
+  MHD_stop_daemon(httpd);
 err:
   cfg_jni_reset();
+  LOGE("Exiting config daemon");
   httpd_running = 0;
+  httpd = 0;
   return res;
 }
 

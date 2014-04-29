@@ -5,6 +5,7 @@
 #include "utstring.h"
 #include "url.h"
 #include "mem_pool.h"
+#include "sirf_gps.h"
 #include <stdio.h>
 #include <sys/types.h>
 
@@ -59,6 +60,7 @@ typedef struct st_run_timer
   char* comment;
   char* workout_ts;
   uint workout_ts_len;
+  Gps_sirf_session sirf;
   Url_hash* post_h;
 } Run_timer;
 
@@ -98,5 +100,7 @@ ulonglong run_timer_now();
 ulonglong run_timer_running_time(Run_timer* t);
 int run_timer_save(Run_timer* t);
 int run_timer_add_key_to_hash(Run_timer* t, const char* key, const char* data, uint size);
+void run_timer_run_sirf_gps(Run_timer* t);
+void run_timer_stop_sirf_gps(Run_timer* t);
 
 #endif

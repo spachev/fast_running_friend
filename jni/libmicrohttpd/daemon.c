@@ -596,7 +596,10 @@ MHD_handle_connection (void *data)
   while ( (MHD_YES != con->daemon->shutdown) && 
 	  (MHD_CONNECTION_CLOSED != con->state) ) 
     {
-      tvp = NULL;
+      /* never go into an infinite wait */
+      tv.tv_sec = 1;
+      tv.tv_usec = 0;
+      tvp = &tv;
       if (timeout > 0)
 	{
 	  now = MHD_monotonic_time();
@@ -632,6 +635,8 @@ MHD_handle_connection (void *data)
 	  FD_ZERO (&es);
 	  max = 0;
 	  MHD_connection_get_fdset (con, &rs, &ws, &es, &max);
+    LOGE("Timeout in select = %p", tvp);
+
 	  num_ready = SELECT (max + 1, &rs, &ws, &es, tvp);
 	  if (num_ready < 0) 
 	    {
@@ -1403,6 +1408,14 @@ MHD_select (struct MHD_Daemon *daemon,
       timeout.tv_sec = ltimeout / 1000;
       tv = &timeout;
     }
+  else /* Never go into an infinite wait */
+  {
+    timeout.tv_usec = 0;
+    timeout.tv_sec = 1;
+    tv = &timeout;
+  }
+
+  LOGE("Timeout in select = %p", tv);
   num_ready = SELECT (max + 1, &rs, &ws, &es, tv);
 
   if (MHD_YES == daemon->shutdown)
@@ -1654,6 +1667,7 @@ MHD_poll (struct MHD_Daemon *daemon,
 int
 MHD_run (struct MHD_Daemon *daemon)
 {
+  LOGE("in MHD_run()");
   if ( (MHD_YES == daemon->shutdown) || 
        (0 != (daemon->options & MHD_USE_THREAD_PER_CONNECTION)) ||
        (0 != (daemon->options & MHD_USE_SELECT_INTERNALLY)) )
