@@ -758,13 +758,32 @@ public class FastRunningFriend extends Activity implements LocationListener
     
     public native void set_system_time(long t_ms);
     MenuInflater menu_inflater = null;
-    
+
     BroadcastReceiver battery_receiver = new BroadcastReceiver() {
-        
+
         @Override
         public void onReceive(Context context, Intent intent) 
         {
-            update_battery_status(intent);
+          update_battery_status(intent);
+        }
+    };
+
+    BroadcastReceiver power_receiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) 
+        {
+          String action = intent.getAction();
+
+          if (action.equals(Intent.ACTION_POWER_CONNECTED))
+          {
+            if (!wifi_on)
+              wifi_connect();
+          }
+          else if (action.equals(Intent.ACTION_POWER_DISCONNECTED))
+          {
+            if (wifi_on)
+              wifi_disconnect();
+          }
         }
     };
     
@@ -844,6 +863,9 @@ public class FastRunningFriend extends Activity implements LocationListener
         start_tod_timer();
         IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
         registerReceiver(battery_receiver, filter);
+        filter = new IntentFilter(Intent.ACTION_POWER_CONNECTED);
+        filter.addAction(Intent.ACTION_POWER_DISCONNECTED);
+        registerReceiver(power_receiver, filter);
 
         // we need to read the config before we call init_data_dir() because
         // it will otherwise use the default expire_files_days value
@@ -1324,7 +1346,7 @@ public class FastRunningFriend extends Activity implements LocationListener
         update_status("WiFi not configured");
         return false;
       }
-      
+
       try
       {
         if (!wifi.isWifiEnabled())
@@ -1432,7 +1454,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       else
         update_status("No configured WiFi networks in range");
     }
-    
+
     private BroadcastReceiver dhcp_receiver = new BroadcastReceiver()
     {
       @Override
@@ -1442,7 +1464,7 @@ public class FastRunningFriend extends Activity implements LocationListener
         handle_dhcp_acquire();
       }
     };
-    
+
     private BroadcastReceiver wifi_receiver = new BroadcastReceiver()
     {
       @Override
@@ -1684,6 +1706,7 @@ public class FastRunningFriend extends Activity implements LocationListener
       
       stop_config_daemon();
       unregisterReceiver(battery_receiver);
+      unregisterReceiver(power_receiver);
       
       if (wifi != null)
       {  
