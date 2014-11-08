@@ -1,0 +1,11 @@
+#! /bin/bash
+
+APP=com.fastrunningblog.FastRunningFriend
+ACT=FastRunningFriend
+set -e -x
+scripts/do-build
+adb remount
+adb push bin/FastRunningFriend-debug.apk /system/app/FastRunningFriend.apk
+adb push libs/armeabi/libfast_running_friend.so /system/lib/
+adb shell kill `adb shell ps | grep $APP | awk '{print $2}'`
+adb shell am start -a android.intent.action.MAIN -n $APP/.$ACT
