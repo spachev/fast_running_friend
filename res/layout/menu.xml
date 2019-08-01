@@ -5,5 +5,6 @@
     <item android:id="@+id/menu_review" android:title="Review"  />
     <item android:id="@+id/menu_gps" android:title="Start/Stop GPS"  />
     <item android:id="@+id/menu_wifi_exit" android:title="Wifi On Exit"  />
+    <item android:id="@+id/menu_use_sys_wifi" android:title="Use System WiFi"  />
     <item android:id="@+id/menu_test_sirf_gps" android:title="Start SiRF GPS test"  />
 </menu>
