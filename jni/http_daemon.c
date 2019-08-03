@@ -30,7 +30,7 @@ struct Session
   struct Session *next;
 
   /**
-   * Unique ID for this session. 
+   * Unique ID for this session.
    */
   char sid[33];
 
@@ -61,7 +61,7 @@ struct Request
   struct MHD_PostProcessor *pp;
 
   /**
-   * URL to serve in response to this POST (if this request 
+   * URL to serve in response to this POST (if this request
    * was a 'POST')
    */
   const char *post_url;
@@ -136,7 +136,7 @@ static struct Session *sessions;
 
 typedef enum {NAV_UNDEF,NAV_CONFIG,NAV_REVIEW} Nav_ident;
 
-typedef struct 
+typedef struct
 {
   const char* title;
   const char* url;
@@ -158,7 +158,7 @@ static void add_nav_menu(UT_string* res, Nav_ident type)
 {
   Nav_item *n = nav_arr;
   utstring_printf(res,"<table><tr>");
-  
+
   for (; n->title; n++)
   {
     if (n->type != type)
@@ -198,7 +198,7 @@ static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num,
                           "%s</span><div style='display:none' id='c_%d_%d'>"
                           "<textarea name='c_%d_%d' rows='5' cols='30'>",
                       leg_num,split_num,template_html,
-                      leg_num, split_num, leg_num, split_num, comment_prompt, 
+                      leg_num, split_num, leg_num, split_num, comment_prompt,
                       leg_num, split_num, leg_num, split_num);
 
     }
@@ -349,7 +349,7 @@ static UT_string* get_workout_review(const char* msg, const char* url)
   const char* t;
 
   utstring_new(res);
-  utstring_printf(res, "<html><head><title>" WORKOUT_PAGE_TITLE 
+  utstring_printf(res, "<html><head><title>" WORKOUT_PAGE_TITLE
     "</title></head><body><h1>" WORKOUT_PAGE_TITLE "</h1>");
   add_nav_menu(res, NAV_UNDEF);
 
@@ -362,7 +362,7 @@ static UT_string* get_workout_review(const char* msg, const char* url)
   utstring_printf(res,"<h2>Workout details for ");
   print_workout_date(res,t);
   utstring_printf(res,"</h2>\n");
-  
+
   if (msg && *msg)
   {
     utstring_printf(res,"%s<br>", msg);
@@ -431,7 +431,7 @@ static UT_string* get_review_list(const char* msg, const char* url)
   // aborts on malloc() failure, which is OK - if things are so bad that malloc fails it is
   // OK to exit for now. TODO: fix so there is clean exit on malloc() failure
   utstring_new(res);
-  utstring_printf(res, "<html><head><title>" REVIEW_PAGE_TITLE 
+  utstring_printf(res, "<html><head><title>" REVIEW_PAGE_TITLE
     "</title></head><body><h1>" REVIEW_PAGE_TITLE "</h1>");
   add_nav_menu(res, NAV_REVIEW);
 
@@ -505,11 +505,11 @@ static UT_string* get_config_form(const char* msg, const char* url)
 {
   UT_string* res;
   Config_var* cfg_var_p;
-  
+
   // aborts on malloc() failure, which is OK - if things are so bad that malloc fails it is
   // OK to exit for now. TODO: fix so there is clean exit on malloc() failure
   utstring_new(res);
-  utstring_printf(res, "<html><head><title>" CONFIG_PAGE_TITLE 
+  utstring_printf(res, "<html><head><title>" CONFIG_PAGE_TITLE
     "</title></head><body><h1>" CONFIG_PAGE_TITLE "</h1>");
 
   add_nav_menu(res, NAV_CONFIG);
@@ -530,7 +530,7 @@ static UT_string* get_config_form(const char* msg, const char* url)
   for (cfg_var_p = config_vars; cfg_var_p->name; cfg_var_p++)
   {
     char buf[512];
-    const char* input_type = cfg_var_p->is_pw ? "password":"text";
+    const char* input_type = cfg_var_p->input_type;
 
     if ((*cfg_var_p->printer)(jni_env,jni_cfg,cfg_var_p,buf,sizeof(buf)))
       goto err;
@@ -543,7 +543,7 @@ static UT_string* get_config_form(const char* msg, const char* url)
   }
 
   utstring_printf(res,"<tr><td colspan=2 align=center>"
-    "<input type=submit name=submit value='Update Configuration'> </td></tr></table>\n" 
+    "<input type=submit name=submit value='Update Configuration'> </td></tr></table>\n"
     "</form>\n</body></html>\n");
   return res;
 err:
@@ -554,7 +554,7 @@ err:
 
 
 /**
- * Return the session handle for this connection, or 
+ * Return the session handle for this connection, or
  * create one if this is a new user.
  */
 static struct Session *
@@ -569,7 +569,7 @@ get_session (struct MHD_Connection *connection)
   {
       /* find existing session */
       ret = sessions;
-      
+
       while (ret)
       {
         if (0 == strcmp (cookie, ret->sid))
@@ -582,12 +582,12 @@ get_session (struct MHD_Connection *connection)
         return ret;
       }
   }
-    
+
  /* create fresh session */
   if (!(ret = calloc (1, sizeof (struct Session))))
-  {           
+  {
     fprintf (stderr, "calloc error: %s\n", strerror (errno));
-    return NULL; 
+    return NULL;
   }
   /* not a super-secure way to generate a random session ID,
      but should do for a simple example... */
@@ -598,7 +598,7 @@ get_session (struct MHD_Connection *connection)
       (unsigned int) random (),
       (unsigned int) random (),
       (unsigned int) random ());
-  ret->rc++;  
+  ret->rc++;
   ret->start = time (NULL);
   ret->next = sessions;
   sessions = ret;
@@ -623,7 +623,7 @@ typedef int (*PageHandler)(const void *cls,
 
 /**
  * Entry we generate for each page served.
- */ 
+ */
 struct Page
 {
   /**
@@ -643,7 +643,7 @@ struct Page
 
   /**
    * Extra argument to handler.
-   */ 
+   */
   const void *handler_cls;
 };
 
@@ -653,7 +653,7 @@ struct Page
  *
  * @param session session to use
  * @param response response to modify
- */ 
+ */
 static void
 add_session_cookie (struct Session *session,
         struct MHD_Response *response)
@@ -664,12 +664,12 @@ add_session_cookie (struct Session *session,
       "%s=%s",
       COOKIE_NAME,
       session->sid);
-  if (MHD_NO == 
+  if (MHD_NO ==
       MHD_add_response_header (response,
              MHD_HTTP_HEADER_SET_COOKIE,
              cstr))
     {
-      fprintf (stderr, 
+      fprintf (stderr,
          "Failed to set session cookie header!\n");
     }
 }
@@ -708,10 +708,10 @@ handle_page (const void *cls,
   {
     cb = get_workout_review;
   }
-  
+
   if (!(reply_s = (*cb)(session->msg,url)))
     return MHD_NO;
-  
+
   reply = utstring_body(reply_s);
   /* return static form */
   response = MHD_create_response_from_buffer (strlen (reply),
@@ -721,8 +721,8 @@ handle_page (const void *cls,
   MHD_add_response_header (response,
          MHD_HTTP_HEADER_CONTENT_ENCODING,
          mime);
-  ret = MHD_queue_response (connection, 
-          MHD_HTTP_OK, 
+  ret = MHD_queue_response (connection,
+          MHD_HTTP_OK,
           response);
   MHD_destroy_response (response);
   utstring_free(reply_s);
@@ -730,7 +730,7 @@ handle_page (const void *cls,
 }
 
 
-#define MAX_POST_VAR_SIZE 512  
+#define MAX_POST_VAR_SIZE 512
 
 /**
  * Iterator over key-value pairs where the value
@@ -866,7 +866,7 @@ create_response (void *cls,
      const char *url,
      const char *method,
      const char *version,
-     const char *upload_data, 
+     const char *upload_data,
      size_t *upload_data_size,
      void **ptr)
 {
@@ -877,10 +877,10 @@ create_response (void *cls,
   unsigned int i;
   int timer_inited = 0;
   struct Page page = {"/","text/html", &handle_page, 0};
-  
+
   request = *ptr;
   LOGE("In create_response, request=%p", *ptr);
-  
+
   if (!request)
   {
     request = calloc (1, sizeof (struct Request));
@@ -941,10 +941,10 @@ create_response (void *cls,
 
     if (request->session)
       request->session->msg = 0;
-    
+
     return MHD_YES;
   }
-  
+
   if (!request->session)
   {
     if (!(request->session = get_session (connection)))
@@ -954,22 +954,22 @@ create_response (void *cls,
       return MHD_NO; /* internal error */
     }
   }
-  
+
   session = request->session;
   session->start = time (NULL);
   session->msg = 0;
-  
+
   if (0 == strcmp (method, MHD_HTTP_METHOD_POST))
-  {      
+  {
     /* evaluate POST data */
     MHD_post_process (request->pp, upload_data,*upload_data_size);
-    
+
     if (*upload_data_size)
     {
       *upload_data_size = 0;
       return MHD_YES;
     }
-    
+
     /* done with POST data, serve response */
     MHD_destroy_post_processor (request->pp);
 
@@ -1008,8 +1008,8 @@ create_response (void *cls,
   response = MHD_create_response_from_buffer (strlen (METHOD_ERROR),
                 (void *) METHOD_ERROR,
                 MHD_RESPMEM_PERSISTENT);
-  ret = MHD_queue_response (connection, 
-          MHD_HTTP_METHOD_NOT_ACCEPTABLE, 
+  ret = MHD_queue_response (connection,
+          MHD_HTTP_METHOD_NOT_ACCEPTABLE,
           response);
   MHD_destroy_response (response);
   return ret;
@@ -1032,10 +1032,10 @@ request_completed_callback (void *cls,
           enum MHD_RequestTerminationCode toe)
 {
   struct Request *request;
-  
+
   if (!con_cls)
     return;
-  
+
   request = (struct Request*)*con_cls;
 
   if (NULL == request)
@@ -1097,7 +1097,7 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
   int res = 0;
 
   MHD_UNSIGNED_LONG_LONG mhd_timeout;
-  
+
   if (httpd_running)
   {
     LOGE("Will not start daemon in http_run_daemon(), httpd_running = %d", httpd_running);
@@ -1105,12 +1105,12 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
   }
 
   exit_requested = 0;
-  
+
   srandom ((unsigned int) time (NULL));
   if (!(httpd = MHD_start_daemon (MHD_USE_DEBUG,
                         8000,
-                        NULL, NULL, 
-      &create_response, NULL, 
+                        NULL, NULL,
+      &create_response, NULL,
       MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 3,
       MHD_OPTION_NOTIFY_COMPLETED, &request_completed_callback, NULL,
       MHD_OPTION_END)))
@@ -1133,7 +1133,7 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
     FD_ZERO (&es);
     if (MHD_YES != MHD_get_fdset (httpd, &rs, &ws, &es, &max))
       break; /* fatal internal error */
-    if (MHD_get_timeout (httpd, &mhd_timeout) == MHD_YES) 
+    if (MHD_get_timeout (httpd, &mhd_timeout) == MHD_YES)
     {
       tv.tv_sec = mhd_timeout / 1000;
       tv.tv_usec = (mhd_timeout - (tv.tv_sec * 1000)) * 1000;

@@ -25,7 +25,7 @@ struct st_config_var
   jfieldID var_id;
   UT_string* post_val;
   uint name_len,lookup_name_len;
-  int is_pw;
+  const char* input_type;
   UT_hash_handle hh;
 } ;
 
