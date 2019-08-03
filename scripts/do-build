@@ -19,7 +19,7 @@ do
     break
   fi
 done
-
+find -name \*.class -or -name \*.o -or -name \*.so -exec rm {} \;
 scripts/mk-quoted-files c-html/form.js > jni/c_html.h
 $NDK_ROOT/ndk-build  V=1 
 ANDROID_SDK_ROOT=$SDK_ROOT scripts/build-apk
