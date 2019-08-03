@@ -37,5 +37,6 @@ extern jobject* jni_cfg;
 jboolean write_config(JNIEnv* env, jobject this_obj, const char* profile_name_s);
 int get_config_var_str(const char* var_name, char* buf, size_t buf_size);
 void cfg_jni_init(JNIEnv* env, jobject* obj);
+void cfg_jni_reset();
 
 #endif

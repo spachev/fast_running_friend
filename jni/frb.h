@@ -1,5 +1,5 @@
 #ifndef FRB_H
-#define FBR_H
+#define FRB_H
 
 #define FRB_TEMPLATE_FNAME "frb.template"
 #define FRB_TEMPLATE_URL "http://www.fastrunningblog.com/frf.php"

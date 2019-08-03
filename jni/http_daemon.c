@@ -563,7 +563,6 @@ get_session (struct MHD_Connection *connection)
   struct Session *ret;
   const char *cookie;
 
-  cookie ;
   if ((cookie = MHD_lookup_connection_value (connection,
           MHD_COOKIE_KIND,
           COOKIE_NAME)))
@@ -789,7 +788,7 @@ post_iterator_workout(void *cls,
   if (!size)
     return MHD_YES;
 
-  LOGE("post_interator_workout: key='%s' value='%-.*s'", key, size, data);
+  LOGE("post_interator_workout: key='%s' value='%-.*s'", key, (int)size, data);
 
   if (run_timer_add_key_to_hash(&r->post_timer,key,data,size))
   {

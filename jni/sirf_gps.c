@@ -65,7 +65,7 @@ static void dump_packet(byte* packet, uint len)
   }
 
   *bp = 0;
-  LOGE(buf);
+  LOGE("%s", buf);
   free(buf);
 }
 
@@ -326,7 +326,7 @@ int gps_sirf_write(Gps_sirf_session* s, byte* msg, uint msg_len)
 
   if (write_len != write(s->fd, s->out_buf, write_len))
   {
-    LOGE("Error writing SiRF GPS packet, tried to write %u bytes");
+    LOGE("Error writing SiRF GPS packet, tried to write %u bytes", write_len);
     return 1;
   }
 

@@ -496,7 +496,7 @@ static jboolean flush_gps_buffer(JNIEnv* env, jobject this_obj)
        continue;
     }
     
-    fprintf(gps_data_fp,"%f,%f,%ld,%f,%f,%f,%f\n",
+    fprintf(gps_data_fp,"%f,%f,%lld,%f,%f,%f,%f\n",
             GET_COORD_MEMBER(lat,Double),
             GET_COORD_MEMBER(lon,Double),
             GET_COORD_MEMBER(ts,Long),
@@ -826,7 +826,7 @@ JNIEXPORT void JNICALL Java_com_fastrunningblog_FastRunningFriend_GPSCoordBuffer
     fflush(gps_debug_fp);
   }
   else
-    LOGE(msg_s);
+    LOGE("GPS debug message: %s", msg_s);
   
   (*env)->ReleaseStringUTFChars(env,msg,msg_s);
 }

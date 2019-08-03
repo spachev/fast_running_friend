@@ -2,7 +2,24 @@
 
 set -e -x
 
+for d in ~/android-ndk-*/ /usr/lib/android-ndk
+do
+  if [ -x "$d/ndk-build" ]
+  then
+    NDK_ROOT=$d
+    break
+  fi
+done
+
+for d in /usr/lib/android-sdk
+do
+  if [ -d "$d" ]
+  then
+    SDK_ROOT=$d
+    break
+  fi
+done
+
 scripts/mk-quoted-files c-html/form.js > jni/c_html.h
-~/android-ndk-r8b/ndk-build  V=1 
-ant clean 
-ant debug
+$NDK_ROOT/ndk-build  V=1 
+ANDROID_SDK_ROOT=$SDK_ROOT scripts/build-apk
