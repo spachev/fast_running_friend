@@ -77,11 +77,16 @@ static int review_timer_inited = 0;
 // TODO: fix thread safety
 static struct MHD_Daemon *httpd = 0;
 
+// URL handlers
 static UT_string* get_config_form(const char* msg, const char* url);
 static UT_string* get_review_list(const char* msg, const char* url);
 static UT_string* get_workout_review(const char* msg, const char* url);
+static UT_string* get_workout_api(const char* msg, const char* url);
+static UT_string* get_review_list_api(const char* msg, const char* url);
+static UT_string* get_app(const char* msg, const char* url);
 
 static void print_html_escaped(UT_string* res, const char* s);
+static print_workout_json(UT_string* res, Run_timer* t);
 
 static int
 post_iterator_config(void *cls,
@@ -115,9 +120,13 @@ static int init_post_config();
 static int finalize_post_config();
 static int finalize_post_workout(struct Request* r);
 static int ensure_review_timer_inited();
+static void print_error_json(UT_string* res, const char* errmsg);
 
 #define WORKOUT_URL "/workout"
 #define WORKOUT_URL_LEN strlen(WORKOUT_URL)
+
+#define WORKOUT_API_URL "/api/workout"
+#define WORKOUT_API_URL_LEN strlen(WORKOUT_API_URL)
 
 
 /**
@@ -150,9 +159,86 @@ Nav_item nav_arr[] = {
 };
 
 static void add_nav_menu(UT_string* res, Nav_ident type);
-static void print_workout_form(UT_string* res, Run_timer* t);
+static void print_workout_form_orig(UT_string* res, Run_timer* t);
+static void print_workout_form_vue(UT_string* res, Run_timer* t);
 static void get_prev_and_next(const char* workout, const char** prev, const char** next);
 
+// TODO: move into a separate  file
+void print_js_escaped(UT_string* res, const char* s)
+{
+  if (!s)
+    return;
+
+  for (;*s;s++)
+  {
+    int need_escape = 0;
+    switch (*s)
+    {
+      case '"':
+      case '\'':
+      case '\\':
+        need_escape = 1;
+        break;
+      case '\r':
+        utstring_bincpy(res, "\\\\r", 3);
+        continue;
+      case '\n':
+        utstring_bincpy(res, "\\\\n", 3);
+        continue;
+      default:
+        if (!isprint(*s))
+        {
+          utstring_printf(res, "\\x%02d", *s);
+          continue;
+        }
+
+        break;
+
+    }
+
+    if (need_escape)
+      utstring_bincpy(res, "\\", 1);
+
+    utstring_bincpy(res, s, 1);
+  }
+}
+
+static void print_error_json(UT_string* res, const char* errmsg)
+{
+  LOGE("Got error: %s", errmsg);
+  utstring_printf(res,"{error:\"");
+  print_js_escaped(res, errmsg);
+  utstring_printf(res, "\"}");
+}
+
+
+static void print_html_escaped(UT_string* res, const char* s)
+{
+  for (;*s;s++)
+  {
+    switch (*s)
+    {
+      case '<':
+        utstring_bincpy(res,"&lt;",4);
+        break;
+      case '>':
+        utstring_bincpy(res,"&gt;",4);
+        break;
+      case '"':
+        utstring_bincpy(res,"&quot;",6);
+        break;
+      case '\'':
+        utstring_bincpy(res,"&apos;",6);
+        break;
+      case '&':
+        utstring_bincpy(res,"&amp;",5);
+        break;
+      default:
+        utstring_bincpy(res,s,1);
+        break;
+    }
+  }
+}
 
 static void add_nav_menu(UT_string* res, Nav_ident type)
 {
@@ -173,6 +259,15 @@ static void add_nav_menu(UT_string* res, Nav_ident type)
 static void print_workout_date(UT_string* res, const char* t)
 {
   utstring_printf(res,"%.4s-%.2s-%.2s %.2s:%.2s:%.2s", t,t+5,t+8,t+11,t+14,t+17);
+}
+
+static void print_html_run_segment_js(UT_string* res, uint leg_num, uint split_num, ulonglong t, double d,
+                                   const char* comment)
+{
+   utstring_printf(res, "{leg_num: %d, split_num: %d, t: %llu, d: %f, comment: \"",
+                   leg_num, split_num, t, d);
+   print_js_escaped(res, comment);
+   utstring_printf(res, "\"}\n");
 }
 
 static void print_html_run_segment(UT_string* res, uint leg_num, uint split_num, ulonglong t, double d,
@@ -235,10 +330,18 @@ static int init_post_config()
    return 0;
 }
 
+static void print_app_js(UT_string* res)
+{
+  utstring_printf(res, "<!DOCTYPE html><html><body>");
+  utstring_printf(res, LIB_JS_Q_F);
+  utstring_printf(res, APP_JS_Q_F);
+  utstring_printf(res, "</body></html>");
+}
 
 static void print_form_js(UT_string* res)
 {
-  utstring_printf(res,FORM_JS_Q_F);
+  utstring_printf(res, LIB_JS_Q_F);
+  utstring_printf(res, FORM_JS_Q_F);
 }
 
 static void print_zone_js(UT_string* res, uint zone, uint leg_num, uint split_num)
@@ -246,7 +349,7 @@ static void print_zone_js(UT_string* res, uint zone, uint leg_num, uint split_nu
   utstring_printf(res,"set_zone(%d,%d,%d);\n",leg_num,split_num,zone);
 }
 
-static void print_workout_form(UT_string* res, Run_timer* t)
+static void print_workout_form_orig(UT_string* res, Run_timer* t)
 {
   Run_leg* cur_leg;
   Run_split* cur_split;
@@ -325,6 +428,81 @@ static void print_workout_form(UT_string* res, Run_timer* t)
     utstring_free(ut_template_html);
 }
 
+static print_workout_json(UT_string* res, Run_timer* t)
+{
+  Run_leg* cur_leg;
+  Run_split* cur_split;
+  uint leg_num = 1, split_num = 1;
+  double d_tmp;
+  ulonglong t_tmp;
+  const char* template_html = 0;
+  const char* comment = t->comment;
+  const char* comment_prompt;
+  int comment_present  = (comment && *comment);
+  int is_first_segment = 1;
+  UT_string* template_json = 0;
+
+  template_json = frb_template_json();
+
+  utstring_printf(res, "{\"comment\": \"");
+  if (comment_present)
+    print_js_escaped(res, comment);
+  utstring_printf(res, "\", \"legs\":[");
+  LL_FOREACH(t->first_leg,cur_leg)
+  {
+    if (!cur_leg->next)
+      continue; // TODO: figure out why this is needed
+
+    if (leg_num > 1)
+      utstring_printf(res, ",");
+
+    utstring_printf(res, "{ \"comment\" : \"");
+    if (cur_leg->comment)
+      print_js_escaped(res, cur_leg->comment);
+    utstring_printf(res, "\", \"leg_num\": %d, \"splits\": [", leg_num);
+
+    split_num = 1;
+
+    LL_FOREACH(cur_leg->first_split,cur_split)
+    {
+      if (cur_split->next)
+      {
+        t_tmp = cur_split->next->t;
+        d_tmp = cur_split->next->d;
+      }
+      else
+      {
+        t_tmp = cur_leg->next->first_split->t;
+        d_tmp = cur_leg->next->first_split->d;
+      }
+
+      if (split_num > 1)
+        utstring_printf(res, ",");
+
+      utstring_printf(res, "{\"comment\":\"");
+      if (cur_split->comment)
+        print_js_escaped(res, cur_split->comment);
+      utstring_printf(res, "\", \"split_num\":%d, \"zone\": %d, \"dist\": %f, \"time\": %llu}",
+                      split_num, cur_split->zone, d_tmp - cur_split->d, t_tmp - cur_split->t);
+
+      split_num++;
+    }
+    utstring_printf(res, "]}");
+
+    leg_num++;
+  }
+
+  utstring_printf(res, "]");
+
+  if (template_json)
+  {
+    utstring_printf(res, ", \"zones\":");
+    utstring_concat(res, template_json);
+  }
+
+  utstring_printf(res, "}");
+}
+
 static void print_workout_nav(UT_string* res, const char* workout)
 {
   const char* prev, *next;
@@ -342,11 +520,66 @@ static void print_workout_nav(UT_string* res, const char* workout)
   utstring_printf(res, "</div>");
 }
 
+static UT_string* get_app(const char* msg, const char* url)
+{
+  UT_string* res = 0;
+  utstring_new(res);
+  print_app_js(res);
+  return res;
+}
+
+static UT_string* get_workout_api(const char* msg, const char* url)
+{
+  UT_string* res = 0;
+  Run_timer w_timer;
+  const char* t;
+  char workout_date[32];
+  const char* errmsg = 0;
+  utstring_new(res);
+  url += WORKOUT_API_URL_LEN;
+
+  if (!(t = strchr(url,'/')))
+  {
+    errmsg = "Missing workout date";
+    goto err;
+  }
+
+  t++;
+
+  char* p;
+
+  for (p = workout_date; *t && *t != '/' && p < workout_date + sizeof(workout_date);)
+    *p++ = *t++;
+
+  *p = 0;
+
+  if (run_timer_init_from_workout(&w_timer,DATA_DIR,workout_date,0))
+  {
+    errmsg = "Error fetching workout details";
+    goto err;
+  }
+
+  print_workout_json(res, &w_timer);
+  run_timer_deinit(&w_timer);
+err:
+  if (errmsg)
+  {
+    print_error_json(res, errmsg);
+  }
+
+  return res;
+}
+
 static UT_string* get_workout_review(const char* msg, const char* url)
 {
   UT_string* res = 0;
   Run_timer w_timer;
   const char* t;
+  char workout_date[32];
+  int use_vue = 0;
+  void (*print_workout_form)(UT_string* res, Run_timer* t);
+
+  print_workout_form = print_workout_form_orig;
 
   utstring_new(res);
   utstring_printf(res, "<html><head><title>" WORKOUT_PAGE_TITLE
@@ -359,8 +592,17 @@ static UT_string* get_workout_review(const char* msg, const char* url)
     goto err;
   }
   t++;
+
+  char* p;
+
+  for (p = workout_date; *t && *t != '/' && p < workout_date + sizeof(workout_date);)
+    *p++ = *t++;
+
+  *p = 0;
+
+
   utstring_printf(res,"<h2>Workout details for ");
-  print_workout_date(res,t);
+  print_workout_date(res, workout_date);
   utstring_printf(res,"</h2>\n");
 
   if (msg && *msg)
@@ -368,7 +610,7 @@ static UT_string* get_workout_review(const char* msg, const char* url)
     utstring_printf(res,"%s<br>", msg);
   }
 
-  if (run_timer_init_from_workout(&w_timer,DATA_DIR,t,0))
+  if (run_timer_init_from_workout(&w_timer,DATA_DIR,workout_date,0))
   {
     utstring_printf(res,"Error fetching workout details for %s", t);
     goto err;
@@ -419,6 +661,62 @@ static void get_prev_and_next(const char* workout, const char** prev, const char
     }
   }
 }
+
+static UT_string* get_review_list_api(const char* msg, const char* url)
+{
+  UT_string* res = 0;
+  Mem_pool pool;
+  char** rl, **rl_p;
+  uint num_entries;
+  const char* errmsg = 0;
+
+  int mem_pool_inited = 0;
+  // aborts on malloc() failure, which is OK - if things are so bad that malloc fails it is
+  // OK to exit for now. TODO: fix so there is clean exit on malloc() failure
+  utstring_new(res);
+  if (ensure_review_timer_inited())
+  {
+    errmsg = "Error initializing review timer object";
+    goto err;
+  }
+
+  if (mem_pool_init(&pool,RUN_TIMER_MEM_POOL_BLOCK))
+  {
+    errmsg = "Error initializing review timer memory pool";
+    goto err;
+  }
+
+  mem_pool_inited = 1;
+
+  if (!(rl = run_timer_run_list(&review_timer,&pool,&num_entries)))
+  {
+    errmsg = "Error initializing the list of workouts";
+    goto err;
+  }
+
+  utstring_printf(res, "[");
+
+  for (rl_p = rl;*rl_p;rl_p++)
+  {
+    const char* maybe_comma = (rl_p == rl) ? "" : ",";
+    utstring_printf(res,"%s\"%s\"", maybe_comma, *rl_p);
+  }
+
+  utstring_printf(res, "]");
+
+err:
+  if (mem_pool_inited)
+  {
+    mem_pool_free(&pool);
+    mem_pool_inited = 0;
+  }
+
+  if (errmsg)
+    print_error_json(res, errmsg);
+
+  return res;
+}
+
 
 static UT_string* get_review_list(const char* msg, const char* url)
 {
@@ -473,34 +771,6 @@ err:
   return res;
 }
 
-static void print_html_escaped(UT_string* res, const char* s)
-{
-  for (;*s;s++)
-  {
-    switch (*s)
-    {
-      case '<':
-        utstring_bincpy(res,"&lt;",4);
-        break;
-      case '>':
-        utstring_bincpy(res,"&gt;",4);
-        break;
-      case '"':
-        utstring_bincpy(res,"&quot;",6);
-        break;
-      case '\'':
-        utstring_bincpy(res,"&apos;",6);
-        break;
-      case '&':
-        utstring_bincpy(res,"&amp;",5);
-        break;
-      default:
-        utstring_bincpy(res,s,1);
-        break;
-    }
-  }
-}
-
 static UT_string* get_config_form(const char* msg, const char* url)
 {
   UT_string* res;
@@ -552,6 +822,10 @@ err:
 }
 
 
+unsigned int _random()
+{
+  return lrand48();
+}
 
 /**
  * Return the session handle for this connection, or
@@ -594,10 +868,10 @@ get_session (struct MHD_Connection *connection)
   snprintf (ret->sid,
       sizeof (ret->sid),
       "%X%X%X%X",
-      (unsigned int) random (),
-      (unsigned int) random (),
-      (unsigned int) random (),
-      (unsigned int) random ());
+      (unsigned int) _random (),
+      (unsigned int) _random (),
+      (unsigned int) _random (),
+      (unsigned int) _random ());
   ret->rc++;
   ret->start = time (NULL);
   ret->next = sessions;
@@ -700,9 +974,21 @@ handle_page (const void *cls,
   UT_string* (*cb)(const char*,const char*);
   cb = get_config_form;
 
-  if (strcmp(url,"/review") == 0)
+  if (strcmp(url,"/app") == 0)
+  {
+    cb = get_app;
+  }
+  else if (strcmp(url,"/review") == 0)
   {
     cb = get_review_list;
+  }
+  else if (strcmp(url,"/api/review") == 0)
+  {
+    cb = get_review_list_api;
+  }
+  else if(strncmp(url,WORKOUT_API_URL,WORKOUT_API_URL_LEN) == 0)
+  {
+    cb = get_workout_api;
   }
   else if(strncmp(url,WORKOUT_URL,WORKOUT_URL_LEN) == 0)
   {
@@ -1086,6 +1372,11 @@ void http_stop_daemon()
   }
 }
 
+static __inline__ void _srand(unsigned int __s)
+{
+        srand48(__s);
+}
+
 int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
 {
   struct timeval tv;
@@ -1106,7 +1397,7 @@ int http_run_daemon(JNIEnv* env,jobject* cfg_obj)
 
   exit_requested = 0;
 
-  srandom ((unsigned int) time (NULL));
+  _srand((unsigned int) time (NULL));
   if (!(httpd = MHD_start_daemon (MHD_USE_DEBUG,
                         8000,
                         NULL, NULL,

@@ -64,45 +64,6 @@ function close_comment(leg_num,split_num)
     el.innerHTML = (leg_num == 0 && split_num == 0) ? 'Edit Workout Comment' : 'Edit Comment';
   }
 }
-function time_to_sec(t)
-{
-  var t_arr = t.split(':');
-  var i = 0;
-  var t = 0;
-  if (t_arr.length < 2 || t_arr.length > 3) return 0;
-  if (t_arr.length == 3)
-  {
-    t = 3600 * t_arr[0];
-    i++;
-  }
-
-  t += t_arr[i] * 60 + Number(t_arr[i+1]);
-  return t;
-}
-
-function sec_to_time(t_sec)
-{
-  var ss, mm, hh;
-  ss = t_sec % 60;
-  t_sec = ((t_sec - ss) / 60);
-  ss = ss.toFixed(1);
-
-  if (ss < 10)
-    ss = '0' + ss.toString();
-  else
-    ss = ss.toString();
-
-  mm = t_sec % 60;
-
-  if (mm < 10)
-    mm = '0' + mm.toString();
-  else
-    mm = mm.toString();
-
-  hh = (t_sec - mm) / 60;
-  var hh_str = (hh > 0) ?  hh.toString() + ':' : '';
-  return  hh_str + mm + ':' + ss;
-}
 
 function update_leg(leg_num)
 {
@@ -133,4 +94,5 @@ function update_leg(leg_num)
   t_span_el.innerHTML = sec_to_time(t_leg);
   d_span_el.innerHTML = d_leg.toFixed(3);
 }
+
 </script>

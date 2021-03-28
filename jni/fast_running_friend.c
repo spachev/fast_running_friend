@@ -463,7 +463,7 @@ static int read_config_double_low(JNIEnv* env, void* config_obj, Config_var* var
   switch (type)
   {
     case VAR_TYPE_ANGLE:
-      val = cos(atof(val_str) * M_PI/180.0);
+      val = cos(strtod(val_str, NULL) * M_PI/180.0);
       break;
     case VAR_TYPE_PACE:
     {
@@ -482,7 +482,7 @@ static int read_config_double_low(JNIEnv* env, void* config_obj, Config_var* var
       break;
     }
     default:
-      val = atof(val_str);
+      val = strtod(val_str, NULL);
       break;
   }
 
@@ -522,7 +522,7 @@ static jboolean flush_gps_buffer(JNIEnv* env, jobject this_obj)
        LOGE("Coordinate object at index %d is NULL, wonder how that happened", flush_ind);
        continue;
     }
-    
+
     fprintf(gps_data_fp,"%f,%f,%lld,%f,%f,%f,%f\n",
             GET_COORD_MEMBER(lat,Double),
             GET_COORD_MEMBER(lon,Double),
@@ -854,7 +854,7 @@ JNIEXPORT void JNICALL Java_com_fastrunningblog_FastRunningFriend_GPSCoordBuffer
   }
   else
     LOGE("GPS debug message: %s", msg_s);
-  
+
   (*env)->ReleaseStringUTFChars(env,msg,msg_s);
 }
 

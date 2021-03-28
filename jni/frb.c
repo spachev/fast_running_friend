@@ -41,7 +41,7 @@ int frb_update_template()
     return 1;
   }
 
-  if (!(data_size=url_fetch(FRB_TEMPLATE_URL,template_buf,MAX_TEMPLATE_BUF, 
+  if (!(data_size=url_fetch(FRB_TEMPLATE_URL,template_buf,MAX_TEMPLATE_BUF,
        "submit=Login&action=fetch_fields&frf_mode=1&username=?&pass=?",
        frb_login, frb_pw)))
   {
@@ -88,7 +88,9 @@ err:
   return res;
 }
 
-UT_string* frb_template_html()
+typedef enum  {FMT_JSON, FMT_HTML} Fmt_type;
+
+static UT_string* frb_template(Fmt_type fmt)
 {
   FILE* fp;
   char buf[128];
@@ -113,23 +115,59 @@ retry:
 
   utstring_new(res);
 
+  int is_first = 1;
+
+  if (fmt == FMT_JSON)
+    utstring_printf(res, "{");
+
   while (fgets(buf,sizeof(buf),fp))
   {
     char* p = strchr(buf,',');
     const char* selected = "";
+    const char* maybe_comma = (is_first) ? "" : ",";
 
     if (!p)
       continue;
 
-    if (strstr(p+1,"Easy"))
-      selected = " selected";
+    char* end = p + strlen(p) - 1;
+    *end = 0;
 
-    utstring_printf(res, "<option value=\"%-.*s\"%s>%s</option>\n",p - buf, buf, selected, p+1);
+    switch (fmt)
+    {
+      case FMT_HTML:
+        if (strstr(p+1,"Easy"))
+          selected = " selected";
+
+        utstring_printf(res, "<option value=\"%-.*s\"%s>%s</option>\n",p - buf, buf, selected, p+1);
+        break;
+
+      case FMT_JSON:
+        utstring_printf(res, "%s\"%-.*s\":\"", maybe_comma, p - buf, buf);
+        print_js_escaped(res, p+1);
+        utstring_printf(res, "\"");
+        break;
+    }
+
+    is_first = 0;
   }
+
+  if (fmt == FMT_JSON)
+    utstring_printf(res, "}");
 
   fclose(fp);
   return res;
 }
+
+UT_string* frb_template_html()
+{
+  return frb_template(FMT_HTML);
+}
+
+UT_string* frb_template_json()
+{
+  return frb_template(FMT_JSON);
+}
+
 
 int frb_post_workout(Run_timer* t)
 {

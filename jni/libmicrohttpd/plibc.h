@@ -571,7 +571,6 @@ char *strcasestr(const char *haystack_start, const char *needle_start);
  #define MUNMAP(s, l) munmap(s, l)
  #define STRERROR(i) strerror(i)
  #define RANDOM() random()
- #define SRANDOM(s) srandom(s)
  #define READLINK(p, b, s) readlink(p, b, s)
  #define LSTAT(p, b) lstat(p, b)
  #define LSTAT64(p, b) lstat64(p, b)

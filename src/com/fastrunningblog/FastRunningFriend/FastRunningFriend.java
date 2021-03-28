@@ -1437,6 +1437,7 @@ public class FastRunningFriend extends Activity implements LocationListener
 
     private void wifi_scan_low()
     {
+      Log.d(TAG, "In wifi_scan_low, wifi=" + wifi + ", wifi_found=" + wifi_found);
       if (wifi == null || wifi_found)
         return;
 
@@ -1452,7 +1453,7 @@ public class FastRunningFriend extends Activity implements LocationListener
         {
           if (n.capabilities.contains("[WEP]"))
             wifi_init_wep();
-          else if (n.capabilities.contains("[WPA]"))
+          else if (n.capabilities.contains("PSK"))
             wifi_init_wpa();
           else
             wifi_init_open();

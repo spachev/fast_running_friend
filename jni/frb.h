@@ -13,6 +13,7 @@
 
 int frb_update_template();
 UT_string* frb_template_html();
+UT_string* frb_template_json();
 int frb_post_workout(Run_timer* t);
 
 #endif

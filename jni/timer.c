@@ -1183,7 +1183,7 @@ int run_timer_parse_key(Run_timer* t, Url_hash_entry* he)
 
         memcpy(buf,data,size);
         buf[size] = 0;
-        sp->d_d = atof(buf);
+        sp->d_d = strtod(buf, NULL);
         break;
       }
       case 'z':
