@@ -4,7 +4,7 @@ function time_to_sec(t)
   var t_arr = t.split(':');
   var i = 0;
   var t = 0;
-  if (t_arr.length < 2 || t_arr.length > 3) return 0;
+  if (t_arr.length < 2 || t_arr.length > 3) return NaN;
   if (t_arr.length == 3)
   {
     t = 3600 * t_arr[0];

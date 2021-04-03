@@ -180,10 +180,10 @@ void print_js_escaped(UT_string* res, const char* s)
         need_escape = 1;
         break;
       case '\r':
-        utstring_bincpy(res, "\\\\r", 3);
+        utstring_bincpy(res, "\\r", 2);
         continue;
       case '\n':
-        utstring_bincpy(res, "\\\\n", 3);
+        utstring_bincpy(res, "\\n", 2);
         continue;
       default:
         if (!isprint(*s))
@@ -985,10 +985,12 @@ handle_page (const void *cls,
   else if (strcmp(url,"/api/review") == 0)
   {
     cb = get_review_list_api;
+    mime = "application/json";
   }
   else if(strncmp(url,WORKOUT_API_URL,WORKOUT_API_URL_LEN) == 0)
   {
     cb = get_workout_api;
+    mime = "application/json";
   }
   else if(strncmp(url,WORKOUT_URL,WORKOUT_URL_LEN) == 0)
   {
@@ -1005,8 +1007,11 @@ handle_page (const void *cls,
                 MHD_RESPMEM_MUST_COPY);
   add_session_cookie (session, response);
   MHD_add_response_header (response,
-         MHD_HTTP_HEADER_CONTENT_ENCODING,
+         MHD_HTTP_HEADER_CONTENT_TYPE,
          mime);
+  // to faciliate testing with the mock server, and we do not really care about cross-origin
+  // requests anyway
+  MHD_add_response_header(response, "Access-Control-Allow-Origin", "*");
   ret = MHD_queue_response (connection,
           MHD_HTTP_OK,
           response);
