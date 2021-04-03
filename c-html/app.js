@@ -13,8 +13,7 @@ div#workout-list {
 }
 
 .frf-split-data {
-  display: inline-block;
-  vertical-align: top;
+  display: block;
 }
 
 .frf-edit-input {
@@ -137,12 +136,10 @@ Vue.component('frf-edit-text', {
     }
   },
   template: '<div class="frf-edit">' +
-    '<div class="frf-edit-menu"><div v-on:click="close_edit()" ' +
-    'v-if="in_edit"><frf-close-edit-icon></frf-close-edit-icon></div>' +
-    '<div v-on:click="open_edit()" v-else><frf-edit-icon>' +
-    '</frf-edit-icon></div></div>' +
-    '<textarea v-bind:style="edit_style" v-if="in_edit">{{text}}</textarea>' +
-    '<div v-else v-bind:style="preview_style">{{preview_text}}</div>' +
+    '<textarea v-bind:style="edit_style" v-on:blur="close_edit()"' +
+    ' v-if="in_edit">{{text}}</textarea>' +
+    '<div v-else v-on:click="open_edit()"' +
+    ' v-bind:style="preview_style">{{preview_text}}</div>' +
     '</div>'
 });
 
@@ -193,6 +190,7 @@ Vue.component('frf-time', {
   methods: {
     validate: function(s) {
       this.is_valid = !isNaN(time_to_sec(s));
+      return this.is_valid;
     },
     finish_edit: function(s) {
       if (!this.validate(s))
@@ -298,10 +296,13 @@ Vue.component('frf-split', {
       return this;
     }
   },
-  template: '<div class="frf-split>"><frf-edit-text :text="s.comment">' +
-    '</frf-edit-text><div class="frf-split-data">' +
+  template: '<div class="frf-split>">' +
+    '<div class="frf-split-data">' +
     ' <frf-dist label="Dist" :parent="me" :d="s.dist"></frf-dist>' +
-    '<frf-time label="Time" :parent="me" :ms="s.time"></frf-time></div></div>'
+    '<frf-time label="Time" :parent="me" :ms="s.time"></frf-time>' +
+    '</div>' +
+    '<frf-edit-text :text="s.comment"></frf-edit-text>' +
+    '</div>'
 });
 
 Vue.component('frf-leg', {
