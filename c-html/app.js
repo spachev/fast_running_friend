@@ -198,7 +198,7 @@ Vue.component('frf-time', {
 
       this.edit_ms = time_to_sec(s) * 1000;
       if (this.oncloseedit)
-        this.oncloseedit(this);
+        this.oncloseedit(this.edit_ms);
     }
   },
   computed: {
@@ -206,6 +206,11 @@ Vue.component('frf-time', {
       if (this.edit_ms === null)
         this.edit_ms = this.ms;
       return sec_to_time(this.edit_ms/1000);
+    }
+  },
+  watch: {
+    ms: function(val) {
+      this.edit_ms = val;
     }
   },
   template: '<div class="frf-time"><span class="frf-label">{{label}}</span>' +
@@ -257,6 +262,11 @@ Vue.component('frf-edit-input', {
       }
     }
   },
+  watch: {
+    val: function(val) {
+      this.cur_val = val;
+    }
+  },
   template: '<div class="frf-edit-input">' +
     '<input v-on:blur="close_edit()" v-if="in_edit"' +
     'v-bind:style="input_style" type="text" v-model="cur_val" />' +
@@ -268,13 +278,15 @@ Vue.component('frf-dist', {
   data: function() {
     return {
       in_edit: false,
-      is_valid: false
+      is_valid: false,
+      edit_d: this.d.toFixed(3),
     }
   },
   methods: {
     finish_edit: function(d_str) {
       if (!this.validate(d_str))
         return;
+      this.edit_d = d_str;
       if (this.oncloseedit)
         this.oncloseedit(d_str);
     },
@@ -282,8 +294,13 @@ Vue.component('frf-dist', {
       return !isNaN(d_str);
     }
   },
+  watch: {
+    d: function(val) {
+      this.edit_d = parseFloat(val).toFixed(3);
+    }
+  },
   template: '<div class="frf-dist"><span class="frf-label">{{label}}</span>' +
-    '<frf-edit-input :val="d" :validate="validate"' +
+    '<frf-edit-input :val="edit_d" :validate="validate"' +
     ' :oncloseedit="finish_edit"' +
     ':parent="parent"></frf-edit-input>' +
     '<span class="frf-label">M</span></div>'
@@ -291,15 +308,49 @@ Vue.component('frf-dist', {
 
 Vue.component('frf-split', {
   props: ["s"],
+  data: function() {
+    return {
+      d: this.s.dist,
+      t: this.s.time,
+    };
+  },
   methods: {
+    update_t: function(val) {
+      this.t = val;
+    },
+    update_d: function(val) {
+      this.d = val;
+    },
+    update_pace: function(val) {
+      if (val)
+      {
+        this.d = this.t / val;
+        console.log("new d", this.d);
+        this.$mount();
+
+      }
+    }
+  },
+  computed: {
     me: function() {
       return this;
+    },
+    pace: {
+      get: function() {
+        if (!this.d)
+          return 0;
+        return this.t/this.d;
+      },
+      set: function(val) {
+        this.update_pace(val);
+      }
     }
   },
   template: '<div class="frf-split>">' +
     '<div class="frf-split-data">' +
-    ' <frf-dist label="Dist" :parent="me" :d="s.dist"></frf-dist>' +
-    '<frf-time label="Time" :parent="me" :ms="s.time"></frf-time>' +
+    '<frf-dist label="Dist" :parent="me" :d="d" :oncloseedit="update_d"></frf-dist>' +
+    '<frf-time label="Time" :parent="me" :ms="t" :oncloseedit="update_t"></frf-time>' +
+    '<frf-time label="Pace" :parent="me" :ms="pace" :oncloseedit="update_pace"></frf-time>' +
     '</div>' +
     '<frf-edit-text :text="s.comment"></frf-edit-text>' +
     '</div>'
@@ -307,9 +358,25 @@ Vue.component('frf-split', {
 
 Vue.component('frf-leg', {
   props: ["l"],
-  template: '<div class="frf-leg"><div><frf-edit-text :text="l.comment"></frf-edit-text>' +
-    '</div><template v-for="s in l.splits">' +
-    '<frf-split :s="s"></frf-split></template></div>'
+  computed: {
+    split_for_leg: function() {
+      var sp = { dist: 0, time: 0, comment: this.l.comment};
+
+      for (var i = 0; i < this.l.splits.length; i++)
+      {
+        var cur_sp = this.l.splits[i];
+        sp.dist += cur_sp.dist;
+        sp.time += cur_sp.time;
+      }
+
+      return sp;
+    }
+  },
+  template: '<div class="frf-leg">' +
+    '<frf-split :s="split_for_leg"></frf-split>' +
+    '<div>' +
+    '</div><div v-if="l.splits.length>1"><template v-for="s in l.splits" >' +
+    '<frf-split :s="s"></frf-split></template></div></div>'
 });
 
 new Vue({

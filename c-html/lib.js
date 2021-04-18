@@ -21,13 +21,19 @@ function sec_to_time(t_sec)
   ss = t_sec % 60;
   t_sec = ((t_sec - ss) / 60);
   ss = ss.toFixed(1);
+  mm = t_sec % 60;
+  // we could get here because of rounding
+  if (ss >= 60)
+  {
+    mm++;
+    ss -= 60;
+  }
 
   if (ss < 10)
     ss = '0' + ss.toString();
   else
     ss = ss.toString();
 
-  mm = t_sec % 60;
 
   if (mm < 10)
     mm = '0' + mm.toString();
